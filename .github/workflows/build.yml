@@ -266,11 +266,20 @@ jobs:
             echo 'struct wpa_global;'
             echo '#define wpas_hidl_init(...) ((struct wpas_hidl_priv *)0)'
             echo '#define wpas_hidl_deinit(...) ((void)0)'
+            # These return int and one call site checks the result.  The
+            # helper keeps a bare statement warning-free under -Wunused-value.
+            echo 'static inline int wpas_hidl_stub_ok(void) { return 0; }'
+            echo '#define wpas_hidl_register_interface(...) wpas_hidl_stub_ok()'
+            echo '#define wpas_hidl_unregister_interface(...) wpas_hidl_stub_ok()'
+            echo '#define wpas_hidl_register_network(...) wpas_hidl_stub_ok()'
+            echo '#define wpas_hidl_unregister_network(...) wpas_hidl_stub_ok()'
             grep -ho 'wpas_hidl_[a-z0-9_]*' "$REAL_HIDL" \
               "$WPA_DIR/wpa_supplicant/notify.c" | sort -u |
               while read -r sym; do
                 case "$sym" in
                   wpas_hidl_priv|wpas_hidl_init|wpas_hidl_deinit) continue ;;
+                  wpas_hidl_register_interface|wpas_hidl_unregister_interface) continue ;;
+                  wpas_hidl_register_network|wpas_hidl_unregister_network) continue ;;
                 esac
                 printf '#define %s(...) ((void)0)\n' "$sym"
               done
