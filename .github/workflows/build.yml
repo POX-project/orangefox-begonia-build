@@ -148,7 +148,22 @@ jobs:
           git clone --depth=1 "$FOX_SYNC_URL" "$GITHUB_WORKSPACE/fox-sync"
           cd "$GITHUB_WORKSPACE/fox-sync"
           chmod +x ./orangefox_sync.sh
-          ./orangefox_sync.sh --branch "$FOX_SYNC_BRANCH" --path "$GITHUB_WORKSPACE/$SRC_DIR"
+          # googlesource occasionally returns 503 for a single project; the
+          # script is resumable, so retry the whole init/sync a few times.
+          ok=0
+          for attempt in 1 2 3; do
+            echo "=== OrangeFox sync attempt $attempt ==="
+            if ./orangefox_sync.sh --branch "$FOX_SYNC_BRANCH" --path "$GITHUB_WORKSPACE/$SRC_DIR"; then
+              ok=1
+              break
+            fi
+            echo "sync attempt $attempt failed"
+            sleep 30
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::OrangeFox source sync failed after 3 attempts"
+            exit 1
+          fi
           echo "--- OrangeFox sources ---"
           ls -la "$GITHUB_WORKSPACE/$SRC_DIR/bootable/recovery" | head
           ls -la "$GITHUB_WORKSPACE/$SRC_DIR/vendor/recovery" | head
