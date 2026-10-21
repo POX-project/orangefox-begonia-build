@@ -169,6 +169,53 @@ jobs:
           ls -la "$GITHUB_WORKSPACE/$SRC_DIR/vendor/recovery" | head
           ls -la "$GITHUB_WORKSPACE/$SRC_DIR/vendor/twrp" | head
 
+      - name: Ensure WiFi userspace sources
+        run: |
+          cd "$GITHUB_WORKSPACE/$SRC_DIR"
+          # default.xml lists external/wpa_supplicant_8, but the minimal
+          # manifest includes remove-minimal.xml, which removes that project
+          # ("remove-project name=platform/external/wpa_supplicant_8").  It is
+          # therefore never checked out by repo; clone it at the manifest
+          # revision so recovery can build wpa_supplicant/wpa_cli.
+          if [ ! -f external/wpa_supplicant_8/wpa_supplicant/android.config ]; then
+            echo "external/wpa_supplicant_8 was removed by remove-minimal.xml; cloning it"
+            rm -rf external/wpa_supplicant_8
+            ok=0
+            for attempt in 1 2 3; do
+              if git clone --depth=1 -b android-12.1.0_r4 \
+                  https://android.googlesource.com/platform/external/wpa_supplicant_8 \
+                  external/wpa_supplicant_8; then
+                ok=1
+                break
+              fi
+              echo "wpa_supplicant_8 clone attempt $attempt failed"
+              rm -rf external/wpa_supplicant_8
+              sleep 15
+            done
+            if [ "$ok" != 1 ]; then
+              echo "::error::could not clone external/wpa_supplicant_8"
+              exit 1
+            fi
+          fi
+
+          # These are still in the manifest (remove-minimal.xml does not drop
+          # them), but check explicitly so a future manifest change fails here
+          # with a clear message instead of somewhere deep in the build.
+          for dep in \
+              external/libnl \
+              system/security/keystore \
+              system/security/keystore-engine \
+              system/hardware/interfaces/wifi/keystore/1.0; do
+            if [ ! -e "$dep" ]; then
+              echo "::error::missing WiFi build dependency: $dep"
+              exit 1
+            fi
+          done
+          test -f external/wpa_supplicant_8/wpa_supplicant/android.config
+          echo "--- WiFi sources OK ---"
+          ls -la external/wpa_supplicant_8/wpa_supplicant/android.config
+          ls -d external/libnl system/hardware/interfaces/wifi/keystore/1.0
+
       - name: Clone begonia device tree
         run: |
           rm -rf "$SRC_DIR/device/xiaomi/begonia"
@@ -179,9 +226,12 @@ jobs:
 
       - name: Patch wpa_supplicant for recovery
         run: |
-          CFG="$SRC_DIR/external/wpa_supplicant_8/wpa_supplicant/android.config"
+          WPA_DIR="$SRC_DIR/external/wpa_supplicant_8"
+          CFG="$WPA_DIR/wpa_supplicant/android.config"
           if [ ! -f "$CFG" ]; then
-            echo "::error::$CFG is missing; the 12.1 sync did not include external/wpa_supplicant_8"
+            echo "::error::$CFG is missing"
+            ls -la "$WPA_DIR" || true
+            ls -la "$WPA_DIR/wpa_supplicant" || true
             exit 1
           fi
           # Recovery has no HIDL wifi service and no keystore2 daemon, so the
