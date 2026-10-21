@@ -1,0 +1,368 @@
+name: OrangeFox build (begonia)
+
+on:
+  workflow_dispatch:
+    inputs:
+      makefile:
+        description: 'Lunch target'
+        required: false
+        default: 'twrp_begonia-eng'
+      build_target:
+        description: 'Make target'
+        required: false
+        default: 'recoveryimage'
+      fox_branch:
+        description: 'OrangeFox sync branch (12.1 is the supported branch for this tree)'
+        required: false
+        default: '12.1'
+      device_branch:
+        description: 'Device tree branch (unified = dynamic+erofs + FBEv2 decryption / non-dynamic+ext4-f2fs)'
+        required: false
+        default: 'unified'
+      jobs:
+        description: 'Parallel make jobs'
+        required: false
+        default: '4'
+      ccache:
+        description: 'Use ccache (true/false)'
+        required: false
+        default: 'true'
+      publish_release:
+        description: 'Create a GitHub release with the image'
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  FOX_SYNC_URL: 'https://gitlab.com/OrangeFox/sync.git'
+  FOX_SYNC_BRANCH: ${{ github.event.inputs.fox_branch || '12.1' }}
+  DEVICE_TREE_URL: 'https://github.com/methylphetamine/device_xiaomi_begonia-orangefox.git'
+  DEVICE_TREE_BRANCH: ${{ github.event.inputs.device_branch || 'unified' }}
+  SRC_DIR: 'aosp'
+  FOX_BUILD_TYPE: 'Unofficial'
+  CCACHE_DIR: '${{ github.workspace }}/.ccache'
+
+jobs:
+  build:
+    name: Compile OrangeFox recovery.img
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Show parameters
+        run: |
+          echo "OrangeFox  : $FOX_SYNC_URL @ $FOX_SYNC_BRANCH"
+          echo "device tree: $DEVICE_TREE_URL @ $DEVICE_TREE_BRANCH"
+          echo "lunch      : ${{ inputs.makefile || 'twrp_begonia-eng' }}"
+          echo "target     : ${{ inputs.build_target || 'recoveryimage' }}"
+          echo "jobs       : ${{ inputs.jobs || '4' }}"
+          echo "ccache     : ${{ inputs.ccache || 'true' }}"
+          echo "free space before:"
+          df -h /
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                    "$AGENT_TOOLSDIRECTORY/CodeQL" \
+                    "$AGENT_TOOLSDIRECTORY/Python" \
+                    /usr/local/share/boost \
+                    /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison ccache curl flex git git-lfs gnupg patch \
+            gcc-multilib g++-multilib \
+            lib32readline-dev lib32z1-dev libelf-dev liblz4-tool \
+            libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
+            lz4 pngcrush python3 rsync schedtool squashfs-tools unzip \
+            xz-utils zip zlib1g-dev openjdk-11-jdk-headless jq
+          java -version 2>&1
+
+      - name: Set JDK 11
+        run: |
+          if [ -d "$JAVA_HOME_11_X64" ]; then
+            echo "JAVA_HOME=$JAVA_HOME_11_X64" >> "$GITHUB_ENV"
+            echo "Using preinstalled JDK 11 at $JAVA_HOME_11_X64"
+          else
+            echo "JDK 11 not preinstalled; relying on openjdk-11-jdk-headless"
+          fi
+          echo "JAVA_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+          "$JAVA_HOME/bin/java" -version 2>&1
+
+      - name: Add swap (recovery link steps are memory hungry)
+        run: |
+          echo "=== swap before ==="
+          swapon --show || true
+          free -h
+          sudo timeout 120 swapoff -a || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 8G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo "=== swap after ==="
+          swapon --show
+          free -h
+
+      - name: Install repo launcher
+        run: |
+          mkdir -p ~/.bin
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o ~/.bin/repo
+          chmod a+x ~/.bin/repo
+          echo "$HOME/.bin" >> "$GITHUB_PATH"
+          repo --version | head -2
+
+      - name: Restore ccache
+        if: ${{ (inputs.ccache || 'true') == 'true' }}
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-begonia-${{ github.run_id }}
+          restore-keys: |
+            ccache-begonia-
+
+      - name: ccache configuration
+        if: ${{ (inputs.ccache || 'true') == 'true' }}
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          ccache -M 8G
+          ccache --zero-stats || true
+
+      - name: Sync OrangeFox sources
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/fox-sync"
+          git clone --depth=1 "$FOX_SYNC_URL" "$GITHUB_WORKSPACE/fox-sync"
+          cd "$GITHUB_WORKSPACE/fox-sync"
+          chmod +x ./orangefox_sync.sh
+          ./orangefox_sync.sh --branch "$FOX_SYNC_BRANCH" --path "$GITHUB_WORKSPACE/$SRC_DIR"
+          echo "--- OrangeFox sources ---"
+          ls -la "$GITHUB_WORKSPACE/$SRC_DIR/bootable/recovery" | head
+          ls -la "$GITHUB_WORKSPACE/$SRC_DIR/vendor/recovery" | head
+          ls -la "$GITHUB_WORKSPACE/$SRC_DIR/vendor/twrp" | head
+
+      - name: Clone begonia device tree
+        run: |
+          rm -rf "$SRC_DIR/device/xiaomi/begonia"
+          git clone --depth=1 -b "$DEVICE_TREE_BRANCH" "$DEVICE_TREE_URL" "$SRC_DIR/device/xiaomi/begonia"
+          test -f "$SRC_DIR/device/xiaomi/begonia/fox_begonia.mk"
+          echo "--- device tree ---"
+          ls -la "$SRC_DIR/device/xiaomi/begonia"
+
+      - name: Record OrangeFox source revisions
+        run: |
+          cd "$SRC_DIR"
+          echo "=== OrangeFox source revisions ==="
+          for d in bootable/recovery vendor/recovery vendor/twrp build/make system/core device/xiaomi/begonia; do
+            if [ -d "$d/.git" ]; then
+              printf "%-28s %s %s\n" "$d" "$(git -C "$d" rev-parse HEAD)" "$(git -C "$d" log -1 --format=%cs)"
+            else
+              printf "%-28s %s\n" "$d" "(not a git checkout)"
+            fi
+          done
+
+      - name: Trim disk before build
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+          # Drop .git for the largest prebuilt/toolchain trees: they are not
+          # needed to build, and this frees roughly 10 GB.
+          du -sh "$SRC_DIR" 2>/dev/null || true
+          find "$SRC_DIR/prebuilts" -maxdepth 6 -type d -name .git -prune -exec rm -rf {} + 2>/dev/null || true
+          find "$SRC_DIR/.repo/project-objects" -type d -name '*.git' -prune -exec rm -rf {} + 2>/dev/null || true
+          df -h /
+
+      - name: Compile
+        env:
+          USE_CCACHE: ${{ inputs.ccache || 'true' }}
+          ALLOW_MISSING_DEPENDENCIES: 'true'
+          BUILD_JOBS: ${{ inputs.jobs || '4' }}
+          MAKEFILE_NAME: ${{ inputs.makefile || 'twrp_begonia-eng' }}
+          BUILD_TARGET: ${{ inputs.build_target || 'recoveryimage' }}
+          BUILD_USERNAME: methylphetamine
+          BUILD_HOSTNAME: poxproject
+          FOX_BUILD_DEVICE: begonia
+          FOX_BUILD_TYPE: Unofficial
+        run: |
+          cd "$SRC_DIR"
+          set -o pipefail
+          source build/envsetup.sh
+          lunch "$MAKEFILE_NAME"
+          mka "$BUILD_TARGET" -j"$BUILD_JOBS" \
+            BUILD_USERNAME=methylphetamine \
+            BUILD_HOSTNAME=poxproject 2>&1 | tee build.log
+
+      - name: Locate and verify output image
+        id: image
+        run: |
+          cd "$SRC_DIR"
+          echo "=== candidate images ==="
+          find out/target/product -maxdepth 2 \
+            \( -name 'recovery*.img' -o -name 'OrangeFox*.img' -o -name 'OrangeFox*.zip' \) \
+            -type f -exec ls -la {} \;
+          IMG=$(find out/target/product -maxdepth 2 -type f \
+            \( -name 'recovery.img' -o -name 'OrangeFox*.img' \) | head -1)
+          if [ -z "$IMG" ]; then
+            echo "::error::OrangeFox recovery image was not produced"
+            exit 1
+          fi
+          echo "using: $IMG"
+          cp "$IMG" "$GITHUB_WORKSPACE/recovery.img"
+          cd "$GITHUB_WORKSPACE"
+          echo "=== sha256 / size ==="
+          sha256sum recovery.img
+          ls -la recovery.img
+          echo "=== avb info ==="
+          "$SRC_DIR"/out/host/linux-x86/bin/avbtool info_image --image recovery.img || true
+          echo "image_path=recovery.img" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to Gofile
+        id: gofile
+        if: success()
+        continue-on-error: true
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          SRV=$(curl -fsSL https://api.gofile.io/servers | jq -r '.data.servers[0].name // empty')
+          if [ -z "$SRV" ]; then
+            echo "::warning::Gofile returned no upload server"
+            exit 0
+          fi
+          HTTP=$(curl -sS -o /tmp/gofile.json -w '%{http_code}' \
+            -F "file=@recovery.img" "https://${SRV}.gofile.io/contents/uploadfile" || true)
+          URL=$(jq -r '.data.downloadPage // empty' /tmp/gofile.json 2>/dev/null || true)
+          if [ "$HTTP" != "200" ] || [ -z "$URL" ]; then
+            echo "::warning::Gofile upload failed (HTTP ${HTTP:-?})"
+            exit 0
+          fi
+          echo "gofile_url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Gofile: $URL"
+
+      - name: Upload to Telegram
+        if: success()
+        continue-on-error: true
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GOFILE_URL: ${{ steps.gofile.outputs.gofile_url }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
+            echo "::warning::TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not configured"
+            exit 0
+          fi
+          SHA=$(sha256sum recovery.img | awk '{print $1}')
+          SIZE=$(stat -c%s recovery.img)
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          CAPTION=$(printf 'OrangeFox recovery - begonia\nSHA256: %s\nGofile: %s\nRun: %s' \
+            "$SHA" "${GOFILE_URL:-n/a}" "$RUN_URL")
+          API="https://api.telegram.org/bot${TG_TOKEN}"
+
+          if [ "$SIZE" -le 49000000 ]; then
+            curl -sS -o /tmp/tg.json \
+              -F "chat_id=${TG_CHAT}" \
+              -F "document=@recovery.img" \
+              --form-string "caption=${CAPTION}" \
+              "${API}/sendDocument" || true
+            if jq -e '.ok == true' /tmp/tg.json >/dev/null 2>&1; then
+              echo "Telegram: recovery.img sent as a document"
+              exit 0
+            fi
+            echo "::warning::Telegram sendDocument failed; sending a link instead"
+          fi
+
+          TEXT=$(printf 'OrangeFox recovery - begonia\nSHA256: %s\nGofile: %s\nRun: %s\nImage size: %s bytes' \
+            "$SHA" "${GOFILE_URL:-n/a}" "$RUN_URL" "$SIZE")
+          curl -sS -o /tmp/tg.json \
+            --data-urlencode "chat_id=${TG_CHAT}" \
+            --data-urlencode "text=${TEXT}" \
+            "${API}/sendMessage" || true
+          if jq -e '.ok == true' /tmp/tg.json >/dev/null 2>&1; then
+            echo "Telegram: link sent"
+          else
+            echo "::warning::Telegram notification failed"
+          fi
+
+      - name: Notify Telegram on failure
+        if: failure()
+        continue-on-error: true
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then exit 0; fi
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          curl -sS -o /tmp/tg.json \
+            --data-urlencode "chat_id=${TG_CHAT}" \
+            --data-urlencode "text=OrangeFox begonia build FAILED: ${RUN_URL}" \
+            "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" || true
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s || true
+
+      - name: Dump build logs on failure
+        if: failure()
+        run: |
+          if [ ! -d "$SRC_DIR" ]; then
+            echo "source tree '$SRC_DIR' does not exist; nothing to dump"
+            exit 0
+          fi
+          cd "$SRC_DIR"
+          echo "=== out/error.log ==="
+          cat out/error.log 2>/dev/null || echo "(none)"
+          echo
+          echo "=== first failing lines from build.log ==="
+          grep -n -i -m 60 -E "error:|Error [0-9]+|No rule to make target|FAILED:" build.log 2>/dev/null || echo "(none)"
+          echo
+          echo "=== tail of build.log ==="
+          tail -n 200 build.log 2>/dev/null || true
+
+      - name: Upload recovery.img artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orangefox-begonia-recovery
+          path: recovery.img
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            $SRC_DIR/build.log
+            $SRC_DIR/out/error.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Publish GitHub release
+        if: ${{ (inputs.publish_release || false) == true }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          SHA=$(sha256sum recovery.img | awk '{print $1}')
+          TAG="${GITHUB_REF_NAME:-twrp-begonia-$(date +%Y%m%d%H%M%S)}"
+          {
+            echo "OrangeFox recovery for Redmi Note 8 Pro (begonia)"
+            echo
+            echo "- commit: $GITHUB_SHA"
+            echo "- sha256: \`$SHA\`"
+            echo "- built by run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > release-notes.md
+          gh release create "$TAG" recovery.img --title "OrangeFox begonia $TAG" \
+            --notes-file release-notes.md || \
+          gh release upload "$TAG" recovery.img --clobber
