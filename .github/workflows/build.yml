@@ -16,9 +16,9 @@ on:
         required: false
         default: '12.1'
       device_branch:
-        description: 'Device tree branch (unified = dynamic+erofs + FBEv2 decryption / non-dynamic+ext4-f2fs)'
+        description: 'Device tree branch (wifi-browser adds recovery WiFi + dashboard; unified = dynamic+erofs + FBEv2 decryption)'
         required: false
-        default: 'unified'
+        default: 'wifi-browser'
       jobs:
         description: 'Parallel make jobs'
         required: false
@@ -43,7 +43,7 @@ env:
   FOX_SYNC_URL: 'https://gitlab.com/OrangeFox/sync.git'
   FOX_SYNC_BRANCH: ${{ github.event.inputs.fox_branch || '12.1' }}
   DEVICE_TREE_URL: 'https://github.com/methylphetamine/device_xiaomi_begonia-orangefox.git'
-  DEVICE_TREE_BRANCH: ${{ github.event.inputs.device_branch || 'unified' }}
+  DEVICE_TREE_BRANCH: ${{ github.event.inputs.device_branch || 'wifi-browser' }}
   SRC_DIR: 'aosp'
   FOX_BUILD_TYPE: 'Unofficial'
   CCACHE_DIR: '${{ github.workspace }}/.ccache'
@@ -162,6 +162,24 @@ jobs:
           echo "--- device tree ---"
           ls -la "$SRC_DIR/device/xiaomi/begonia"
 
+      - name: Patch wpa_supplicant for recovery
+        run: |
+          CFG="$SRC_DIR/external/wpa_supplicant_8/wpa_supplicant/android.config"
+          if [ ! -f "$CFG" ]; then
+            echo "::error::$CFG is missing; the 12.1 sync did not include external/wpa_supplicant_8"
+            exit 1
+          fi
+          # Recovery has no HIDL wifi service and no keystore2 daemon, so the
+          # daemon must expose the classic unix control socket for wpa_cli.
+          sed -i 's/^CONFIG_CTRL_IFACE_HIDL=y/#CONFIG_CTRL_IFACE_HIDL=y/' "$CFG"
+          if grep -q '^CONFIG_CTRL_IFACE_HIDL=y' "$CFG"; then
+            echo "::error::failed to disable CONFIG_CTRL_IFACE_HIDL"
+            exit 1
+          fi
+          grep -n 'CONFIG_CTRL_IFACE' "$CFG" | tail -5
+          test -f "$SRC_DIR/device/xiaomi/begonia/recovery/root/system/bin/foxwifi"
+          test -f "$SRC_DIR/device/xiaomi/begonia/recovery/root/init.recovery.wifi.rc"
+
       - name: Record OrangeFox source revisions
         run: |
           cd "$SRC_DIR"
@@ -254,6 +272,13 @@ jobs:
           echo "=== sha256 / size ==="
           sha256sum recovery.img
           ls -la recovery.img
+          SIZE=$(stat -c%s recovery.img)
+          LIMIT=67108864
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            echo "::error::recovery.img is $SIZE bytes, larger than the ${LIMIT}-byte partition"
+            exit 1
+          fi
+          echo "fits the recovery partition: $SIZE <= $LIMIT bytes"
           echo "=== avb info ==="
           "$SRC_DIR"/out/host/linux-x86/bin/avbtool info_image --image recovery.img || true
           echo "image_path=recovery.img" >> "$GITHUB_OUTPUT"
