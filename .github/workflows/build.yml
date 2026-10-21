@@ -245,13 +245,13 @@ jobs:
 
           # notify.c includes "hidl.h" and calls wpas_hidl_* unconditionally,
           # even though AOSP only builds the HIDL implementation when
-          # CONFIG_CTRL_IFACE_HIDL is enabled.  With HIDL disabled there is no
-          # such header on the include path, so the stock source does not
-          # compile.  Provide a recovery-only header in the directory quoted
-          # includes search first; it turns every HIDL notification into a
-          # no-op.  The daemon then uses the plain unix control socket, which
-          # is what wpa_cli needs here.  The real header is still used if the
-          # HIDL build option is ever re-enabled.
+          # CONFIG_CTRL_IFACE_HIDL is enabled.  The #else branch in the real
+          # header is incomplete (it has syntax errors and is missing several
+          # notifications), so it cannot be used as-is.  Provide a
+          # recovery-only header in the directory quoted includes search
+          # first; every HIDL notification becomes a no-op.  The daemon then
+          # uses the plain unix control socket, which is what wpa_cli needs.
+          # The real header is still used if HIDL is ever re-enabled.
           REAL_HIDL="$WPA_DIR/wpa_supplicant/hidl/1.4/hidl.h"
           STUB_HIDL="$WPA_DIR/wpa_supplicant/hidl.h"
           test -f "$REAL_HIDL"
