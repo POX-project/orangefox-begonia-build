@@ -215,7 +215,21 @@ jobs:
             exit 1
           fi
 
-          lunch "$MAKEFILE_NAME" 2>&1 | tee -a build.log
+          # Do NOT pipe lunch: a pipeline runs lunch in a subshell, so its
+          # exported TARGET_PRODUCT would not reach mka.  mka would then fall
+          # back to aosp_arm (no device BoardConfig, no TW_THEME).
+          set +e
+          lunch "$MAKEFILE_NAME" >> build.log 2>&1
+          LUNCH_RC=$?
+          set -e
+          tail -n 40 build.log || true
+          if [ "$LUNCH_RC" -ne 0 ] || [ -z "$TARGET_PRODUCT" ]; then
+            echo "::error::lunch failed or did not export TARGET_PRODUCT"
+            exit 1
+          fi
+          export TARGET_PRODUCT TARGET_BUILD_VARIANT TARGET_BUILD_TYPE
+          echo "Using TARGET_PRODUCT=$TARGET_PRODUCT TARGET_BUILD_VARIANT=$TARGET_BUILD_VARIANT"
+
           mka "$BUILD_TARGET" -j"$BUILD_JOBS" \
             BUILD_USERNAME=methylphetamine \
             BUILD_HOSTNAME=poxproject 2>&1 | tee -a build.log
