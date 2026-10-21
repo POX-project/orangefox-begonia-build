@@ -321,6 +321,21 @@ jobs:
         id: image
         run: |
           cd "$SRC_DIR"
+          # Guard against a silent relink skip.  external/wpa_supplicant_8 only
+          # defines its modules when WPA_SUPPLICANT_VERSION=VER_0_8_X, and
+          # relink.sh skips source files that do not exist without failing.
+          for f in \
+              out/target/product/begonia/vendor/bin/hw/wpa_supplicant \
+              out/target/product/begonia/vendor/bin/wpa_cli \
+              out/target/product/begonia/recovery/root/system/bin/wpa_supplicant \
+              out/target/product/begonia/recovery/root/system/bin/wpa_cli \
+              out/target/product/begonia/recovery/root/system/lib64/libkeystore-wifi-hidl.so \
+              out/target/product/begonia/recovery/root/system/lib64/libkeystore-engine-wifi-hidl.so; do
+            if [ ! -e "$f" ]; then
+              echo "::error::missing $f; WiFi userspace was not built or relinked"
+              exit 1
+            fi
+          done
           echo "=== candidate images ==="
           find out/target/product -maxdepth 2 \
             \( -name 'recovery*.img' -o -name 'OrangeFox*.img' -o -name 'OrangeFox*.zip' \) \
