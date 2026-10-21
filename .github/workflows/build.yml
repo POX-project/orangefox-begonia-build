@@ -198,11 +198,27 @@ jobs:
         run: |
           cd "$SRC_DIR"
           set -o pipefail
-          source build/envsetup.sh
-          lunch "$MAKEFILE_NAME"
+          : > build.log
+
+          # OrangeFox's envsetup hook ends with an optional VTS test and
+          # returns 1 when frameworks/base/services/core/xsd/vts/Android.mk
+          # is absent (the normal case for the minimal manifest).  The
+          # environment is still valid, so do not let `set -e` abort here.
+          set +e
+          source build/envsetup.sh >> build.log 2>&1
+          ENVSETUP_RC=$?
+          set -e
+          echo "envsetup exited ${ENVSETUP_RC} (1 is expected for OrangeFox's optional VTS cleanup)"
+          tail -n 20 build.log || true
+          if [ -z "$ANDROID_BUILD_TOP" ]; then
+            echo "::error::envsetup did not initialise ANDROID_BUILD_TOP"
+            exit 1
+          fi
+
+          lunch "$MAKEFILE_NAME" 2>&1 | tee -a build.log
           mka "$BUILD_TARGET" -j"$BUILD_JOBS" \
             BUILD_USERNAME=methylphetamine \
-            BUILD_HOSTNAME=poxproject 2>&1 | tee build.log
+            BUILD_HOSTNAME=poxproject 2>&1 | tee -a build.log
 
       - name: Locate and verify output image
         id: image
