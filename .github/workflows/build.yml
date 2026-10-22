@@ -16,7 +16,7 @@ on:
         required: false
         default: '12.1'
       device_branch:
-        description: 'Device tree branch (wifi-browser adds recovery WiFi + dashboard; unified = dynamic+erofs + FBEv2 decryption)'
+        description: 'Device tree branch (wifi-browser adds recovery WiFi + dashboard; unified = dynamic+erofs + FBE v1 decryption)'
         required: false
         default: 'wifi-browser'
       jobs:
