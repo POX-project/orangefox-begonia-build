@@ -395,7 +395,7 @@ jobs:
           BUILD_JOBS: ${{ inputs.jobs || '4' }}
           MAKEFILE_NAME: ${{ inputs.makefile || 'twrp_begonia-eng' }}
           BUILD_TARGET: ${{ inputs.build_target || 'recoveryimage' }}
-          BUILD_USERNAME: A X
+          BUILD_USERNAME: A_X
           BUILD_HOSTNAME: poxproject
           FOX_BUILD_DEVICE: begonia
           FOX_BUILD_TYPE: Unofficial
