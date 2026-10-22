@@ -38,14 +38,19 @@ def main() -> None:
         }
     }
     auto entry = GetEntryForMountPoint(&fstab_default, DATA_MNT_POINT);'''
-    new_fstab = '''    android::fs_mgr::Fstab rom_fstab;
+    new_fstab = '''    if (fstab_default.empty() && !ReadDefaultFstab(&fstab_default)) {
+        // Keep going: the additional fstab may still be usable.
+        PLOG(ERROR) << "Failed to open default fstab";
+    }
+    android::fs_mgr::Fstab rom_fstab;
     android::fs_mgr::Fstab* fstab = &fstab_default;
     if (access("/etc/additional.fstab", R_OK) == 0 &&
         ReadFstabFromFile("/etc/additional.fstab", &rom_fstab)) {
         fstab = &rom_fstab;
         LOG(INFO) << "FBE: using installed ROM fstab /etc/additional.fstab";
-    } else if (fstab_default.empty() && !ReadDefaultFstab(&fstab_default)) {
-        PLOG(ERROR) << "Failed to open default fstab";
+    }
+    if (fstab->empty()) {
+        LOG(ERROR) << "No fstab entries available for " << DATA_MNT_POINT;
         return false;
     }
     auto entry = GetEntryForMountPoint(fstab, DATA_MNT_POINT);'''
