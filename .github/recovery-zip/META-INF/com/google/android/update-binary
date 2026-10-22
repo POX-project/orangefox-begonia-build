@@ -1,0 +1,113 @@
+#!/sbin/sh
+#
+# Flash recovery.img to the begonia recovery partition.
+#
+# This is a shell update-binary, in the same style as AnyKernel3.  TWRP and
+# OrangeFox execute it directly and ignore the dummy updater-script.
+#
+# Arguments supplied by the recovery:
+#   $1 = API version (3)
+#   $2 = UI file descriptor
+#   $3 = path to the ZIP being flashed
+#
+# FOX_RECOVERY_PARTITION is only for local testing; on a device the script
+# probes the standard by-name paths.
+
+PATH=/sbin:/system/bin:/system/xbin:/vendor/bin${PATH:+:$PATH}
+export PATH
+umask 022
+
+OUTFD="$2"
+ZIPFILE="$3"
+TMP=/tmp/recovery.img
+LIMIT=${FOX_RECOVERY_LIMIT:-67108864}
+
+ui_print() {
+    # TWRP/OrangeFox normally pass a writable UI descriptor.  Some recovery
+    # shells use a pty that cannot be reopened through /proc/self/fd, so fall
+    # back to stderr rather than aborting the flash.
+    if [ -n "$OUTFD" ]; then
+        if printf 'ui_print %s\nui_print\n' "$1" >> "/proc/self/fd/$OUTFD" 2>/dev/null; then
+            return 0
+        fi
+    fi
+    printf 'ui_print %s\nui_print\n' "$1" >&2
+}
+
+abort() {
+    ui_print "$1"
+    exit 1
+}
+
+[ -n "$ZIPFILE" ] || abort "ZIP path was not provided"
+[ -e "$ZIPFILE" ] || abort "ZIP not found: $ZIPFILE"
+
+if command -v unzip >/dev/null 2>&1; then
+    UNZIP=unzip
+elif command -v busybox >/dev/null 2>&1; then
+    UNZIP="busybox unzip"
+else
+    abort "unzip is not available in recovery"
+fi
+
+if [ -n "${FOX_RECOVERY_PARTITION:-}" ]; then
+    RECOVERY=$FOX_RECOVERY_PARTITION
+else
+    RECOVERY=
+    for candidate in \
+        /dev/block/by-name/recovery \
+        /dev/block/bootdevice/by-name/recovery \
+        /dev/block/platform/bootdevice/by-name/recovery \
+        /dev/block/platform/mtk-msdc.0/by-name/recovery; do
+        if [ -e "$candidate" ]; then
+            RECOVERY=$candidate
+            break
+        fi
+    done
+fi
+
+[ -n "$RECOVERY" ] || abort "recovery partition was not found"
+[ -e "$RECOVERY" ] || abort "recovery partition does not exist: $RECOVERY"
+
+rm -f "$TMP"
+if ! $UNZIP -p "$ZIPFILE" recovery.img > "$TMP"; then
+    rm -f "$TMP"
+    abort "could not extract recovery.img from the ZIP"
+fi
+[ -s "$TMP" ] || abort "recovery.img is missing or empty"
+
+SIZE=$(stat -c %s "$TMP" 2>/dev/null || wc -c < "$TMP")
+SIZE=$(printf '%s' "$SIZE" | tr -d ' ')
+case "$SIZE" in
+    ''|*[!0-9]*) rm -f "$TMP"; abort "could not determine recovery.img size" ;;
+esac
+[ "$SIZE" -le "$LIMIT" ] || {
+    rm -f "$TMP"
+    abort "recovery.img is $SIZE bytes, larger than the ${LIMIT}-byte limit"
+}
+
+# Refuse to write past a real block device when blockdev is available.  The
+# by-name partition is exactly 64 MiB on begonia, but checking is cheap.
+if command -v blockdev >/dev/null 2>&1; then
+    PART_SIZE=$(blockdev --getsize64 "$RECOVERY" 2>/dev/null || true)
+    case "$PART_SIZE" in
+        ''|*[!0-9]*) ;;
+        *)
+            [ "$SIZE" -le "$PART_SIZE" ] || {
+                rm -f "$TMP"
+                abort "recovery.img is $SIZE bytes, partition is only $PART_SIZE bytes"
+            }
+            ;;
+    esac
+fi
+
+ui_print "Flashing ${SIZE}-byte recovery.img to $RECOVERY"
+if ! dd if="$TMP" of="$RECOVERY" bs=1048576; then
+    rm -f "$TMP"
+    abort "failed to write the recovery partition"
+fi
+sync
+rm -f "$TMP"
+
+ui_print "Recovery flashed successfully. Reboot to recovery to use it."
+exit 0

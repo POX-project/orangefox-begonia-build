@@ -6,7 +6,7 @@ GitHub Actions builder for OrangeFox Recovery on the Xiaomi Redmi Note 8 Pro
 - OrangeFox sync branch: `12.1`
 - Device tree: `methylphetamine/device_xiaomi_begonia-orangefox` (`wifi-browser`)
 - Lunch target: `twrp_begonia-eng`
-- Output: `recovery.img` (published as an OrangeFox image)
+- Outputs: `recovery.img` and `OrangeFox-begonia-<run>.zip` (flashable recovery ZIP)
 - Brand/model: `Randi` / `Nut 8 Pro`
 - Dynamic partitions + explicit EROFS/ext4 fstab + FBEv2 decryption
 
@@ -35,6 +35,11 @@ and a browser dashboard to recovery:
   bundle packed at `/system/etc/security/cacert.pem`.
 - The image is rejected if it exceeds the 64 MB (`67108864` byte) recovery
   partition.
+- The verified image is packaged into a flashable ZIP. Its shell
+  `update-binary` writes `recovery.img` to `/dev/block/by-name/recovery`,
+  falls back to the MediaTek by-name path, checks the 64 MiB limit, and syncs
+  the partition. The ZIP is uploaded as the `orangefox-begonia-flashable`
+  artifact alongside the `orangefox-begonia-recovery` image artifact.
 
 The device tree can still be overridden with the `device_branch` workflow
 input; use `unified` for the previous non-WiFi build.

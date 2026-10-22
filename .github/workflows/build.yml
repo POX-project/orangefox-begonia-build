@@ -28,7 +28,7 @@ on:
         required: false
         default: 'true'
       publish_release:
-        description: 'Create a GitHub release with the image'
+        description: 'Create a GitHub release with the image and flashable ZIP'
         type: boolean
         required: false
         default: false
@@ -50,7 +50,7 @@ env:
 
 jobs:
   build:
-    name: Compile OrangeFox recovery.img
+    name: Build OrangeFox recovery image and flashable ZIP
     runs-on: ubuntu-22.04
     timeout-minutes: 350
 
@@ -466,62 +466,131 @@ jobs:
           "$SRC_DIR"/out/host/linux-x86/bin/avbtool info_image --image recovery.img || true
           echo "image_path=recovery.img" >> "$GITHUB_OUTPUT"
 
+      - name: Build flashable recovery zip
+        id: flashable
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          test -s recovery.img
+          sh -n .github/recovery-zip/META-INF/com/google/android/update-binary
+
+          rm -rf recovery-zip
+          mkdir -p recovery-zip/META-INF/com/google/android
+          cp .github/recovery-zip/META-INF/com/google/android/update-binary \
+            recovery-zip/META-INF/com/google/android/update-binary
+          cp .github/recovery-zip/META-INF/com/google/android/updater-script \
+            recovery-zip/META-INF/com/google/android/updater-script
+          cp recovery.img recovery-zip/recovery.img
+          chmod 0755 recovery-zip/META-INF/com/google/android/update-binary
+
+          ZIP_NAME="OrangeFox-begonia-${GITHUB_RUN_NUMBER}.zip"
+          ZIP_PATH="$GITHUB_WORKSPACE/$ZIP_NAME"
+          rm -f "$ZIP_PATH"
+          (cd recovery-zip && zip -r -9 "$ZIP_PATH" META-INF recovery.img)
+
+          echo "=== zip integrity ==="
+          unzip -t "$ZIP_PATH"
+          echo "=== zip contents ==="
+          unzip -l "$ZIP_PATH"
+
+          # The packaged image must be byte-identical to the image whose size
+          # and hash were verified above.
+          rm -f /tmp/packaged-recovery.img
+          unzip -p "$ZIP_PATH" recovery.img > /tmp/packaged-recovery.img
+          cmp recovery.img /tmp/packaged-recovery.img
+          rm -f /tmp/packaged-recovery.img
+
+          # The updater must be executable after extraction.
+          unzip -Z1 "$ZIP_PATH" | grep -qx 'META-INF/com/google/android/update-binary'
+          unzip -Z1 "$ZIP_PATH" | grep -qx 'META-INF/com/google/android/updater-script'
+          unzip -Z1 "$ZIP_PATH" | grep -qx 'recovery.img'
+          MODE=$(zipinfo -l "$ZIP_PATH" META-INF/com/google/android/update-binary \
+            | awk 'NR == 1 {print $1}')
+          case "$MODE" in
+            -rwx*) ;;
+            *) echo "::error::update-binary is not executable in the ZIP ($MODE)"; exit 1 ;;
+          esac
+
+          # Exercise the packaged updater end-to-end against a regular file,
+          # never a block device.  This catches extraction, size, and dd logic
+          # regressions before the ZIP is published.
+          DRY_RUN_PARTITION=$(mktemp /tmp/ofox-recovery-dry-run.XXXXXX)
+          FOX_RECOVERY_PARTITION="$DRY_RUN_PARTITION" \
+            sh .github/recovery-zip/META-INF/com/google/android/update-binary \
+            3 1 "$ZIP_PATH" > /tmp/ofox-updater-dry-run.log 2>&1
+          cmp recovery.img "$DRY_RUN_PARTITION"
+          rm -f "$DRY_RUN_PARTITION" /tmp/ofox-updater-dry-run.log
+
+          echo "=== zip hash / size ==="
+          sha256sum "$ZIP_PATH"
+          stat -c '%s %n' "$ZIP_PATH"
+          ZIP_SHA=$(sha256sum "$ZIP_PATH" | awk '{print $1}')
+          ZIP_SIZE=$(stat -c%s "$ZIP_PATH")
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
+          echo "zip_sha256=$ZIP_SHA" >> "$GITHUB_OUTPUT"
+          echo "zip_size=$ZIP_SIZE" >> "$GITHUB_OUTPUT"
+          rm -rf recovery-zip
+
       - name: Upload to Gofile
         id: gofile
         if: success()
         continue-on-error: true
         run: |
           cd "$GITHUB_WORKSPACE"
+          ZIP_NAME="${{ steps.flashable.outputs.zip_name }}"
+          test -f "$ZIP_NAME"
           SRV=$(curl -fsSL https://api.gofile.io/servers | jq -r '.data.servers[0].name // empty')
           if [ -z "$SRV" ]; then
             echo "::warning::Gofile returned no upload server"
             exit 0
           fi
           HTTP=$(curl -sS -o /tmp/gofile.json -w '%{http_code}' \
-            -F "file=@recovery.img" "https://${SRV}.gofile.io/contents/uploadfile" || true)
+            -F "file=@${ZIP_NAME}" "https://${SRV}.gofile.io/contents/uploadfile" || true)
           URL=$(jq -r '.data.downloadPage // empty' /tmp/gofile.json 2>/dev/null || true)
           if [ "$HTTP" != "200" ] || [ -z "$URL" ]; then
             echo "::warning::Gofile upload failed (HTTP ${HTTP:-?})"
             exit 0
           fi
           echo "gofile_url=$URL" >> "$GITHUB_OUTPUT"
-          echo "Gofile: $URL"
+          echo "Gofile: $URL ($ZIP_NAME)"
 
-      - name: Upload to Telegram
+      - name: Upload flashable ZIP to Telegram
         if: success()
         continue-on-error: true
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
           GOFILE_URL: ${{ steps.gofile.outputs.gofile_url }}
+          ZIP_NAME: ${{ steps.flashable.outputs.zip_name }}
+          ZIP_SHA: ${{ steps.flashable.outputs.zip_sha256 }}
+          ZIP_SIZE: ${{ steps.flashable.outputs.zip_size }}
         run: |
           cd "$GITHUB_WORKSPACE"
           if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
             echo "::warning::TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not configured"
             exit 0
           fi
-          SHA=$(sha256sum recovery.img | awk '{print $1}')
-          SIZE=$(stat -c%s recovery.img)
+          test -f "$ZIP_NAME"
           RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          CAPTION=$(printf 'OrangeFox recovery - begonia\nSHA256: %s\nGofile: %s\nRun: %s' \
-            "$SHA" "${GOFILE_URL:-n/a}" "$RUN_URL")
+          CAPTION=$(printf 'OrangeFox recovery flashable ZIP - begonia\nZIP SHA256: %s\nGofile: %s\nRun: %s' \
+            "$ZIP_SHA" "${GOFILE_URL:-n/a}" "$RUN_URL")
           API="https://api.telegram.org/bot${TG_TOKEN}"
 
-          if [ "$SIZE" -le 49000000 ]; then
+          if [ "$ZIP_SIZE" -le 49000000 ]; then
             curl -sS -o /tmp/tg.json \
               -F "chat_id=${TG_CHAT}" \
-              -F "document=@recovery.img" \
+              -F "document=@${ZIP_NAME}" \
               --form-string "caption=${CAPTION}" \
               "${API}/sendDocument" || true
             if jq -e '.ok == true' /tmp/tg.json >/dev/null 2>&1; then
-              echo "Telegram: recovery.img sent as a document"
+              echo "Telegram: ${ZIP_NAME} sent as a document"
               exit 0
             fi
             echo "::warning::Telegram sendDocument failed; sending a link instead"
           fi
 
-          TEXT=$(printf 'OrangeFox recovery - begonia\nSHA256: %s\nGofile: %s\nRun: %s\nImage size: %s bytes' \
-            "$SHA" "${GOFILE_URL:-n/a}" "$RUN_URL" "$SIZE")
+          TEXT=$(printf 'OrangeFox recovery flashable ZIP - begonia\nZIP SHA256: %s\nGofile: %s\nRun: %s\nZIP size: %s bytes' \
+            "$ZIP_SHA" "${GOFILE_URL:-n/a}" "$RUN_URL" "$ZIP_SIZE")
           curl -sS -o /tmp/tg.json \
             --data-urlencode "chat_id=${TG_CHAT}" \
             --data-urlencode "text=${TEXT}" \
@@ -575,6 +644,14 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+      - name: Upload flashable ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orangefox-begonia-flashable
+          path: ${{ steps.flashable.outputs.zip_name }}
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Upload build log artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -593,14 +670,21 @@ jobs:
         run: |
           cd "$GITHUB_WORKSPACE"
           SHA=$(sha256sum recovery.img | awk '{print $1}')
+          ZIP_NAME="${{ steps.flashable.outputs.zip_name }}"
+          ZIP_SHA="${{ steps.flashable.outputs.zip_sha256 }}"
+          ZIP_SIZE="${{ steps.flashable.outputs.zip_size }}"
+          test -f "$ZIP_NAME"
           TAG="${GITHUB_REF_NAME:-twrp-begonia-$(date +%Y%m%d%H%M%S)}"
           {
             echo "OrangeFox recovery for Redmi Note 8 Pro (begonia)"
             echo
             echo "- commit: $GITHUB_SHA"
-            echo "- sha256: \`$SHA\`"
+            echo "- recovery.img sha256: \`$SHA\`"
+            echo "- flashable ZIP: \`$ZIP_NAME\`"
+            echo "- flashable ZIP sha256: \`$ZIP_SHA\`"
+            echo "- flashable ZIP size: $ZIP_SIZE bytes"
             echo "- built by run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > release-notes.md
-          gh release create "$TAG" recovery.img --title "OrangeFox begonia $TAG" \
-            --notes-file release-notes.md || \
-          gh release upload "$TAG" recovery.img --clobber
+          gh release create "$TAG" recovery.img "$ZIP_NAME" \
+            --title "OrangeFox begonia $TAG" --notes-file release-notes.md || \
+          gh release upload "$TAG" recovery.img "$ZIP_NAME" --clobber
