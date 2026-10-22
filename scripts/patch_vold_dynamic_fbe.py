@@ -77,43 +77,48 @@ def main() -> None:
     new_parse = old_parse + '''
     bool detected_v1 = false;
     bool detected = false;
+    int installed_version = -1;
     fscrypt_policy installed_policy{};
-    // Cache the result: after the DE key is installed, names under
-    // /data/misc may be readable and the dirent fallback would no longer
-    // tell v1 from v2.  The first call happens before any /data key exists.
+    // Cache the normalized vold version (1 or 2), not the raw kernel policy
+    // version.  FSCRYPT_POLICY_V1 is 0 in the kernel UAPI, while
+    // EncryptionOptions::version uses 1 for v1.  Passing 0 to installKey()
+    // makes it reject the key with "Invalid encryption policy version: 0".
     static int cached_policy_version = -1;
-    if (cached_policy_version == FSCRYPT_POLICY_V1 ||
-        cached_policy_version == FSCRYPT_POLICY_V2) {
-        installed_policy.version = cached_policy_version;
+    if (cached_policy_version == 1 || cached_policy_version == 2) {
+        installed_version = cached_policy_version;
         detected = true;
     } else if (fscrypt_policy_get_struct("/data/misc", &installed_policy)) {
-        detected = true;
+        if (installed_policy.version == FSCRYPT_POLICY_V1) {
+            installed_version = 1;
+        } else if (installed_policy.version == FSCRYPT_POLICY_V2) {
+            installed_version = 2;
+        }
+        detected = installed_version != -1;
     } else {
         DIR* dir = opendir("/data/misc");
         if (dir != nullptr) {
             struct dirent* de;
             while ((de = readdir(dir)) != nullptr) {
                 if (de->d_name[0] == '.') continue;
-                installed_policy.version = std::strchr(de->d_name, ',') != nullptr
-                                               ? FSCRYPT_POLICY_V1
-                                               : FSCRYPT_POLICY_V2;
+                // Legacy v1 encrypted dirents contain a comma; v2 base64url
+                // names do not.
+                installed_version = std::strchr(de->d_name, ',') != nullptr ? 1 : 2;
                 detected = true;
                 break;
             }
             closedir(dir);
         }
     }
-    if (detected && (installed_policy.version == FSCRYPT_POLICY_V1 ||
-                     installed_policy.version == FSCRYPT_POLICY_V2)) {
-        if (options->version != installed_policy.version) {
+    if (detected) {
+        if (options->version != installed_version) {
             LOG(INFO) << "FBE: installed /data policy is v"
-                      << static_cast<int>(installed_policy.version)
+                      << installed_version
                       << "; overriding fstab policy v"
                       << static_cast<int>(options->version);
         }
-        options->version = installed_policy.version;
-        detected_v1 = installed_policy.version == FSCRYPT_POLICY_V1;
-        cached_policy_version = installed_policy.version;
+        options->version = installed_version;
+        detected_v1 = installed_version == 1;
+        cached_policy_version = installed_version;
     }
     if (detected_v1) {
         // Hardware-wrapped keys and IV_INO_LBLK_32 are v2-only features.
@@ -143,6 +148,29 @@ def main() -> None:
             raise SystemExit(f"expected wrapped-key block in {path}")
         src = src.replace(old_wrapped, new_wrapped, 1)
         print("patched wrapped-key selection")
+
+    # A v1 policy can never use hardware-wrapped keys.  Do not let the generic
+    # retry path toggle one on after a v1 install failure; that only produces a
+    # misleading keymaster error and masks the real failure.
+    old_retry = '''        if (retry) {
+            printf("Trying %s wrappedkey\\n", options.use_hw_wrapped_key ? "without" : "with");
+            GetEntryForMountPoint(&fstab_default, DATA_MNT_POINT)->fs_mgr_flags.wrapped_key =
+                options.use_hw_wrapped_key = !options.use_hw_wrapped_key;
+            retry = false;
+            goto install;
+        }'''
+    new_retry = '''        if (retry && options.version != 1) {
+            printf("Trying %s wrappedkey\\n", options.use_hw_wrapped_key ? "without" : "with");
+            GetEntryForMountPoint(&fstab_default, DATA_MNT_POINT)->fs_mgr_flags.wrapped_key =
+                options.use_hw_wrapped_key = !options.use_hw_wrapped_key;
+            retry = false;
+            goto install;
+        }'''
+    if 'if (retry && options.version != 1)' not in src:
+        if old_retry not in src:
+            raise SystemExit(f"expected wrapped-key retry block in {path}")
+        src = src.replace(old_retry, new_retry, 1)
+        print("patched v1 wrapped-key retry")
 
     path.write_text(src)
 
