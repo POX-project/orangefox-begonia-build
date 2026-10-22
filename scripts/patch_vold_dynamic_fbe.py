@@ -24,10 +24,15 @@ def main() -> None:
         needle = '#include "fscrypt-common.h"'
         if needle not in src:
             raise SystemExit(f"expected fscrypt-common.h include in {path}")
-        extra = '\n#include "fscrypt_policy.h"'
-        if '#include <cstring>' not in src:
-            extra += '\n#include <cstring>'
-        src = src.replace(needle, needle + extra, 1)
+        src = src.replace(needle, needle + '\n#include "fscrypt_policy.h"', 1)
+
+    if '#include <cstring>' not in src:
+        anchor = ('#include "fscrypt_policy.h"'
+                  if '#include "fscrypt_policy.h"' in src
+                  else '#include "fscrypt-common.h"')
+        if anchor not in src:
+            raise SystemExit(f"expected an fscrypt include in {path}")
+        src = src.replace(anchor, anchor + '\n#include <cstring>', 1)
 
     # Use the installed ROM's fstab for the FBE key options.  This is the
     # file TWRP creates from /vendor/etc/fstab.<hardware>.
