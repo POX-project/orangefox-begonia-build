@@ -16,7 +16,7 @@ on:
         required: false
         default: '12.1'
       device_branch:
-        description: 'Device tree branch (wifi-browser adds recovery WiFi + dashboard; unified = dynamic+erofs + FBE v1 decryption)'
+        description: 'Device tree branch (wifi-browser adds recovery WiFi + dashboard; unified = dynamic+erofs; both use runtime FBE v1/v2 decryption)'
         required: false
         default: 'wifi-browser'
       jobs:
@@ -356,6 +356,15 @@ jobs:
               raise SystemExit('expected fscrypt_init_user0 snippet not found in ' + path)
           PY
           grep -n -A6 'Recovery mounts /data before vold starts' "$FSCRYPT"
+
+      - name: Patch vold for dynamic FBE v1/v2 decryption
+        run: |
+          cd "$GITHUB_WORKSPACE/$SRC_DIR"
+          FSCRYPT="system/vold/FsCrypt.cpp"
+          test -f "$FSCRYPT"
+          python3 "$GITHUB_WORKSPACE/scripts/patch_vold_dynamic_fbe.py" "$FSCRYPT"
+          grep -n -A3 'FBE: using installed ROM fstab' "$FSCRYPT"
+          grep -n -A3 'FBE: installed /data policy is v' "$FSCRYPT"
 
       - name: Record OrangeFox source revisions
         run: |
