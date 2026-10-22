@@ -10,7 +10,7 @@ GitHub Actions builder for OrangeFox Recovery on the Xiaomi Redmi Note 8 Pro
   `OrangeFox-R12.0-Unofficial-begonia.zip` (includes the default `sdcard/Fox`
   tools/extras)
 - Brand/model: `Randi` / `Nut 8 Pro`
-- Dynamic partitions + explicit EROFS/ext4 fstab + FBEv2 decryption
+- Dynamic partitions + explicit EROFS/ext4 fstab + FBE v1 decryption
 
 The workflow uses the official OrangeFox `orangefox_sync.sh` to fetch the
 12.1 minimal manifest, patch it, and clone the OrangeFox recovery and vendor
