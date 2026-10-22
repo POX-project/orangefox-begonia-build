@@ -6,7 +6,9 @@ GitHub Actions builder for OrangeFox Recovery on the Xiaomi Redmi Note 8 Pro
 - OrangeFox sync branch: `12.1`
 - Device tree: `methylphetamine/device_xiaomi_begonia-orangefox` (`wifi-browser`)
 - Lunch target: `twrp_begonia-eng`
-- Outputs: `recovery.img` and `OrangeFox-begonia-<run>.zip` (flashable recovery ZIP)
+- Outputs: `recovery.img` and the official OrangeFox installer ZIP
+  `OrangeFox-R12.0-Unofficial-begonia.zip` (includes the default `sdcard/Fox`
+  tools/extras)
 - Brand/model: `Randi` / `Nut 8 Pro`
 - Dynamic partitions + explicit EROFS/ext4 fstab + FBEv2 decryption
 
@@ -35,11 +37,16 @@ and a browser dashboard to recovery:
   bundle packed at `/system/etc/security/cacert.pem`.
 - The image is rejected if it exceeds the 64 MB (`67108864` byte) recovery
   partition.
-- The verified image is packaged into a flashable ZIP. Its shell
-  `update-binary` writes `recovery.img` to `/dev/block/by-name/recovery`,
-  falls back to the MediaTek by-name path, checks the 64 MiB limit, and syncs
-  the partition. The ZIP is uploaded as the `orangefox-begonia-flashable`
-  artifact alongside the `orangefox-begonia-recovery` image artifact.
+- The build's official OrangeFox installer ZIP is published unchanged. It
+  contains the installer `META-INF`, `recovery.img`, and the default
+  `sdcard/Fox` tools/extras (`FoxFiles`, Magisk/uninstall zips, and AromaFM).
+  The workflow checks the ZIP integrity and required entries, confirms the
+  tools are present, and verifies that the embedded `recovery.img` is
+  byte-identical to the image checked above. The ZIP is uploaded as the
+  `orangefox-begonia-flashable` artifact alongside the
+  `orangefox-begonia-recovery` image artifact. Only the embedded image needs to
+  fit the 64 MiB partition; the installer ZIP is about 74 MB, so Telegram falls
+  back to a download link.
 
 The device tree can still be overridden with the `device_branch` workflow
 input; use `unified` for the previous non-WiFi build.

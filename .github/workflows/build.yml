@@ -466,59 +466,63 @@ jobs:
           "$SRC_DIR"/out/host/linux-x86/bin/avbtool info_image --image recovery.img || true
           echo "image_path=recovery.img" >> "$GITHUB_OUTPUT"
 
-      - name: Build flashable recovery zip
+      - name: Verify official OrangeFox flashable ZIP
         id: flashable
         run: |
-          cd "$GITHUB_WORKSPACE"
-          test -s recovery.img
-          sh -n .github/recovery-zip/META-INF/com/google/android/update-binary
-
-          rm -rf recovery-zip
-          mkdir -p recovery-zip/META-INF/com/google/android
-          cp .github/recovery-zip/META-INF/com/google/android/update-binary \
-            recovery-zip/META-INF/com/google/android/update-binary
-          cp .github/recovery-zip/META-INF/com/google/android/updater-script \
-            recovery-zip/META-INF/com/google/android/updater-script
-          cp recovery.img recovery-zip/recovery.img
-          chmod 0755 recovery-zip/META-INF/com/google/android/update-binary
-
-          ZIP_NAME="OrangeFox-begonia-${GITHUB_RUN_NUMBER}.zip"
+          cd "$SRC_DIR"
+          ZIP=$(find out/target/product -maxdepth 2 -type f \
+            -name 'OrangeFox*.zip' ! -name '*_lite.zip' | head -1)
+          if [ -z "$ZIP" ]; then
+            echo "::error::the OrangeFox flashable installer ZIP was not produced"
+            exit 1
+          fi
+          echo "using flashable zip: $ZIP"
+          ZIP_NAME=$(basename "$ZIP")
           ZIP_PATH="$GITHUB_WORKSPACE/$ZIP_NAME"
-          rm -f "$ZIP_PATH"
-          (cd recovery-zip && zip -r -9 "$ZIP_PATH" META-INF recovery.img)
+          cp "$ZIP" "$ZIP_PATH"
+          cd "$GITHUB_WORKSPACE"
+          test -s "$ZIP_PATH"
 
           echo "=== zip integrity ==="
           unzip -t "$ZIP_PATH"
-          echo "=== zip contents ==="
-          unzip -l "$ZIP_PATH"
+          echo "=== zip contents (preview) ==="
+          unzip -l "$ZIP_PATH" | sed -n '1,100p'
 
-          # The packaged image must be byte-identical to the image whose size
-          # and hash were verified above.
-          rm -f /tmp/packaged-recovery.img
-          unzip -p "$ZIP_PATH" recovery.img > /tmp/packaged-recovery.img
-          cmp recovery.img /tmp/packaged-recovery.img
-          rm -f /tmp/packaged-recovery.img
+          # This must be OrangeFox's installer package, not a bare image zip.
+          for entry in \
+              META-INF/com/google/android/update-binary \
+              META-INF/com/google/android/updater-script \
+              recovery.img; do
+            unzip -Z1 "$ZIP_PATH" | grep -qx "$entry" || {
+              echo "::error::flashable ZIP is missing $entry"
+              exit 1
+            }
+          done
+          # OrangeFox installs its default extras/tools from sdcard/Fox.
+          if ! unzip -Z1 "$ZIP_PATH" | grep -q '^sdcard/Fox/FoxFiles/.'; then
+            echo "::error::flashable ZIP does not contain the default sdcard/Fox/FoxFiles tools"
+            exit 1
+          fi
+          echo "=== default OrangeFox tools (preview) ==="
+          unzip -Z1 "$ZIP_PATH" | grep '^sdcard/Fox/' | sed -n '1,40p'
 
-          # The updater must be executable after extraction.
-          unzip -Z1 "$ZIP_PATH" | grep -qx 'META-INF/com/google/android/update-binary'
-          unzip -Z1 "$ZIP_PATH" | grep -qx 'META-INF/com/google/android/updater-script'
-          unzip -Z1 "$ZIP_PATH" | grep -qx 'recovery.img'
-          MODE=$(zipinfo -l "$ZIP_PATH" META-INF/com/google/android/update-binary \
-            | awk 'NR == 1 {print $1}')
-          case "$MODE" in
-            -rwx*) ;;
-            *) echo "::error::update-binary is not executable in the ZIP ($MODE)"; exit 1 ;;
-          esac
+          # The recovery image inside the installer must be the verified image.
+          rm -f /tmp/ofox-zip-recovery.img
+          unzip -p "$ZIP_PATH" recovery.img > /tmp/ofox-zip-recovery.img
+          cmp recovery.img /tmp/ofox-zip-recovery.img
+          rm -f /tmp/ofox-zip-recovery.img
 
-          # Exercise the packaged updater end-to-end against a regular file,
-          # never a block device.  This catches extraction, size, and dd logic
-          # regressions before the ZIP is published.
-          DRY_RUN_PARTITION=$(mktemp /tmp/ofox-recovery-dry-run.XXXXXX)
-          FOX_RECOVERY_PARTITION="$DRY_RUN_PARTITION" \
-            sh .github/recovery-zip/META-INF/com/google/android/update-binary \
-            3 1 "$ZIP_PATH" > /tmp/ofox-updater-dry-run.log 2>&1
-          cmp recovery.img "$DRY_RUN_PARTITION"
-          rm -f "$DRY_RUN_PARTITION" /tmp/ofox-updater-dry-run.log
+          # Sanity-check the official installer script, which was patched for
+          # this device by OrangeFox.sh.
+          rm -f /tmp/ofox-update-binary
+          unzip -p "$ZIP_PATH" META-INF/com/google/android/update-binary \
+            > /tmp/ofox-update-binary
+          head -n 5 /tmp/ofox-update-binary
+          grep -q 'TARGET_DEVICE' /tmp/ofox-update-binary || {
+            echo "::error::unexpected OrangeFox installer update-binary"
+            exit 1
+          }
+          rm -f /tmp/ofox-update-binary
 
           echo "=== zip hash / size ==="
           sha256sum "$ZIP_PATH"
@@ -529,7 +533,6 @@ jobs:
           echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
           echo "zip_sha256=$ZIP_SHA" >> "$GITHUB_OUTPUT"
           echo "zip_size=$ZIP_SIZE" >> "$GITHUB_OUTPUT"
-          rm -rf recovery-zip
 
       - name: Upload to Gofile
         id: gofile
@@ -572,7 +575,7 @@ jobs:
           fi
           test -f "$ZIP_NAME"
           RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          CAPTION=$(printf 'OrangeFox recovery flashable ZIP - begonia\nZIP SHA256: %s\nGofile: %s\nRun: %s' \
+          CAPTION=$(printf 'OrangeFox official installer ZIP - begonia (recovery.img + sdcard/Fox tools)\nZIP SHA256: %s\nGofile: %s\nRun: %s' \
             "$ZIP_SHA" "${GOFILE_URL:-n/a}" "$RUN_URL")
           API="https://api.telegram.org/bot${TG_TOKEN}"
 
@@ -589,7 +592,7 @@ jobs:
             echo "::warning::Telegram sendDocument failed; sending a link instead"
           fi
 
-          TEXT=$(printf 'OrangeFox recovery flashable ZIP - begonia\nZIP SHA256: %s\nGofile: %s\nRun: %s\nZIP size: %s bytes' \
+          TEXT=$(printf 'OrangeFox official installer ZIP - begonia (recovery.img + sdcard/Fox tools)\nZIP SHA256: %s\nGofile: %s\nRun: %s\nZIP size: %s bytes' \
             "$ZIP_SHA" "${GOFILE_URL:-n/a}" "$RUN_URL" "$ZIP_SIZE")
           curl -sS -o /tmp/tg.json \
             --data-urlencode "chat_id=${TG_CHAT}" \
@@ -680,7 +683,7 @@ jobs:
             echo
             echo "- commit: $GITHUB_SHA"
             echo "- recovery.img sha256: \`$SHA\`"
-            echo "- flashable ZIP: \`$ZIP_NAME\`"
+            echo "- official flashable ZIP (includes default \`sdcard/Fox\` tools): \`$ZIP_NAME\`"
             echo "- flashable ZIP sha256: \`$ZIP_SHA\`"
             echo "- flashable ZIP size: $ZIP_SIZE bytes"
             echo "- built by run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

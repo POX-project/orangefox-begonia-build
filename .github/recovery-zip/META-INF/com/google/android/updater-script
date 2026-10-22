@@ -1,3 +1,0 @@
-# Dummy updater-script.
-# update-binary is a shell script that writes recovery.img to the recovery
-# partition; TWRP/OrangeFox execute that instead of this file.
