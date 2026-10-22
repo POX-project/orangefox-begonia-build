@@ -216,6 +216,35 @@ jobs:
           ls -la external/wpa_supplicant_8/wpa_supplicant/android.config
           ls -d external/libnl system/hardware/interfaces/wifi/keystore/1.0
 
+      - name: Ensure curl source
+        run: |
+          cd "$GITHUB_WORKSPACE/$SRC_DIR"
+          # remove-minimal.xml also removes external/curl.  The recovery build
+          # links the curl binary from this project, so clone it before lunch.
+          if [ ! -f external/curl/Android.bp ]; then
+            echo "external/curl was removed by remove-minimal.xml; cloning it"
+            rm -rf external/curl
+            ok=0
+            for attempt in 1 2 3; do
+              if git clone --depth=1 -b android-12.1.0_r4 \
+                  https://android.googlesource.com/platform/external/curl \
+                  external/curl; then
+                ok=1
+                break
+              fi
+              echo "external/curl clone attempt $attempt failed"
+              rm -rf external/curl
+              sleep 15
+            done
+            if [ "$ok" != 1 ]; then
+              echo "::error::could not clone external/curl"
+              exit 1
+            fi
+          fi
+          test -f external/curl/Android.bp
+          echo "--- curl source OK ---"
+          ls -la external/curl/Android.bp
+
       - name: Clone begonia device tree
         run: |
           rm -rf "$SRC_DIR/device/xiaomi/begonia"
@@ -295,7 +324,7 @@ jobs:
         run: |
           cd "$SRC_DIR"
           echo "=== OrangeFox source revisions ==="
-          for d in bootable/recovery vendor/recovery vendor/twrp build/make system/core device/xiaomi/begonia; do
+          for d in bootable/recovery vendor/recovery vendor/twrp build/make system/core external/curl device/xiaomi/begonia; do
             if [ -d "$d/.git" ]; then
               printf "%-28s %s %s\n" "$d" "$(git -C "$d" rev-parse HEAD)" "$(git -C "$d" log -1 --format=%cs)"
             else
@@ -382,6 +411,34 @@ jobs:
               exit 1
             fi
           done
+
+          # Download tools: curl is a build module, wget/ssl_client are
+          # wrappers from the device tree, and the CA bundle must be packed.
+          for f in \
+              out/target/product/begonia/recovery/root/system/bin/curl \
+              out/target/product/begonia/recovery/root/system/bin/wget \
+              out/target/product/begonia/recovery/root/system/bin/ssl_client \
+              out/target/product/begonia/recovery/root/system/etc/security/cacert.pem; do
+            if [ ! -e "$f" ]; then
+              echo "::error::missing $f; download tools were not packed"
+              exit 1
+            fi
+          done
+          test -x out/target/product/begonia/recovery/root/system/bin/curl
+          test -x out/target/product/begonia/recovery/root/system/bin/wget
+          test -x out/target/product/begonia/recovery/root/system/bin/ssl_client
+          echo "=== curl dynamic dependencies ==="
+          CURL_LIBS=$(readelf -d out/target/product/begonia/recovery/root/system/bin/curl \
+            | sed -n 's/.*NEEDED.*\[\(.*\)\]/\1/p')
+          printf '%s\n' "$CURL_LIBS"
+          for lib in $CURL_LIBS; do
+            if [ ! -e "out/target/product/begonia/recovery/root/system/lib64/$lib" ] \
+                && [ ! -e "out/target/product/begonia/recovery/root/system/lib/$lib" ]; then
+              echo "::error::curl dependency $lib is missing from the recovery root"
+              exit 1
+            fi
+          done
+
           echo "=== candidate images ==="
           find out/target/product -maxdepth 2 \
             \( -name 'recovery*.img' -o -name 'OrangeFox*.img' -o -name 'OrangeFox*.zip' \) \

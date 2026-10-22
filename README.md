@@ -29,6 +29,10 @@ and a browser dashboard to recovery:
 - MediaTek WMT firmware, `wmt_loader`, `wmt_launcher`, `wlan_assistant`,
   `dhcpcd`, a static BusyBox and the dashboard are packed from the device
   tree's `recovery/root`.
+- `wget` is exposed from BusyBox, and the workflow clones `external/curl`
+  (removed by the minimal manifest) so the recovery build can relink a real
+  `curl` into `/system/bin`. HTTPS curl traffic validates against the CA
+  bundle packed at `/system/etc/security/cacert.pem`.
 - The image is rejected if it exceeds the 64 MB (`67108864` byte) recovery
   partition.
 
