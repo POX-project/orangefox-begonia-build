@@ -707,8 +707,8 @@ jobs:
         with:
           name: build-logs
           path: |
-            $SRC_DIR/build.log
-            $SRC_DIR/out/error.log
+            ${{ env.SRC_DIR }}/build.log
+            ${{ env.SRC_DIR }}/out/error.log
           if-no-files-found: ignore
           retention-days: 7
 
