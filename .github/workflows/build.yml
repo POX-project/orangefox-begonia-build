@@ -395,7 +395,7 @@ jobs:
           BUILD_JOBS: ${{ inputs.jobs || '4' }}
           MAKEFILE_NAME: ${{ inputs.makefile || 'twrp_begonia-eng' }}
           BUILD_TARGET: ${{ inputs.build_target || 'recoveryimage' }}
-          BUILD_USERNAME: methylphetamine
+          BUILD_USERNAME: A X
           BUILD_HOSTNAME: poxproject
           FOX_BUILD_DEVICE: begonia
           FOX_BUILD_TYPE: Unofficial
@@ -435,7 +435,7 @@ jobs:
           echo "Using TARGET_PRODUCT=$TARGET_PRODUCT TARGET_BUILD_VARIANT=$TARGET_BUILD_VARIANT"
 
           mka "$BUILD_TARGET" -j"$BUILD_JOBS" \
-            BUILD_USERNAME=methylphetamine \
+            BUILD_USERNAME="$BUILD_USERNAME" \
             BUILD_HOSTNAME=poxproject 2>&1 | tee -a build.log
 
       - name: Locate and verify output image
