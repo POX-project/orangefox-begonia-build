@@ -320,6 +320,43 @@ jobs:
           test -f "$SRC_DIR/device/xiaomi/begonia/recovery/root/system/bin/foxwifi"
           test -f "$SRC_DIR/device/xiaomi/begonia/recovery/root/init.recovery.wifi.rc"
 
+      - name: Patch vold FBE directories for recovery
+        run: |
+          cd "$GITHUB_WORKSPACE/$SRC_DIR"
+          FSCRYPT="system/vold/FsCrypt.cpp"
+          if [ ! -f "$FSCRYPT" ]; then
+            echo "::error::$FSCRYPT is missing; cannot patch FBE key setup"
+            find system -maxdepth 4 -path '*/vold/FsCrypt.cpp' -o -name FsCrypt.cpp || true
+            exit 1
+          fi
+          python3 - "$FSCRYPT" <<'PY'
+          import sys
+
+          path = sys.argv[1]
+          with open(path) as f:
+              src = f.read()
+
+          needle = 'if (!prepare_dir(user_key_dir, 0700, AID_ROOT, AID_ROOT)) return false;'
+          insert = '''// Recovery mounts /data before vold starts, so Android's init has not
+                  // created /data/misc/vold yet.  fs_prepare_dir() only creates the
+                  // final path component; create the parents first, otherwise user_keys
+                  // cannot be created and FBE DE decryption never completes.
+                  if (!prepare_dir("/data/misc", 01771, AID_SYSTEM, AID_MISC)) return false;
+                  if (!prepare_dir("/data/misc/vold", 0700, AID_ROOT, AID_ROOT)) return false;
+                  '''
+
+          if 'prepare_dir("/data/misc/vold"' in src:
+              print('vold FBE parent-directory patch already applied')
+          elif needle in src:
+              src = src.replace(needle, insert + needle, 1)
+              with open(path, 'w') as f:
+                  f.write(src)
+              print('patched', path)
+          else:
+              raise SystemExit('expected fscrypt_init_user0 snippet not found in ' + path)
+          PY
+          grep -n -A6 'Recovery mounts /data before vold starts' "$FSCRYPT"
+
       - name: Record OrangeFox source revisions
         run: |
           cd "$SRC_DIR"
