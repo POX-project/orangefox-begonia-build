@@ -1,0 +1,45 @@
+name: foxkbd build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout device tree
+        uses: actions/checkout@v4
+        with:
+          repository: methylphetamine/device_xiaomi_begonia-orangefox
+          ref: net-fix
+          path: device
+          fetch-depth: 1
+
+      - name: Cache musl cross toolchain
+        uses: actions/cache@v4
+        with:
+          path: /tmp/foxkbd-build
+          key: foxkbd-musl-aarch64-v1
+
+      - name: Build static foxkbd
+        run: |
+          cd device
+          test -x tools/build-foxkbd.sh
+          WORK=/tmp/foxkbd-build ./tools/build-foxkbd.sh
+          test -x recovery/root/system/bin/foxkbd
+          file recovery/root/system/bin/foxkbd
+          if readelf -d recovery/root/system/bin/foxkbd | grep -q NEEDED; then
+            echo "::error::foxkbd is not statically linked"
+            exit 1
+          fi
+
+      - name: Upload foxkbd
+        uses: actions/upload-artifact@v4
+        with:
+          name: foxkbd-aarch64
+          path: device/recovery/root/system/bin/foxkbd
+          if-no-files-found: error
