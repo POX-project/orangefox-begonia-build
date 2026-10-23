@@ -21,11 +21,10 @@ jobs:
           path: device
           fetch-depth: 1
 
-      - name: Cache musl cross toolchain
-        uses: actions/cache@v4
-        with:
-          path: /tmp/foxkbd-build
-          key: foxkbd-musl-aarch64-v1
+      - name: Install aarch64 cross compiler
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
 
       - name: Build static foxkbd
         run: |
