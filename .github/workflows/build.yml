@@ -234,6 +234,36 @@ jobs:
           echo "--- device tree ---"
           ls -la "$SRC_DIR/device/xiaomi/begonia"
 
+      - name: Set OrangeFox default theme and status bar
+        run: |
+          THEME_DIR="$SRC_DIR/bootable/recovery/gui/theme/portrait_hdpi/themes"
+          test -f "$THEME_DIR/styles/Dark.xml"
+          # Fresh installs load /twres/themes/style.xml.  Make the Dark style
+          # that file so OrangeFox starts dark without requiring the user to
+          # open the theme workshop first.
+          cp -f "$THEME_DIR/styles/Dark.xml" "$THEME_DIR/style.xml"
+          grep -q 'name="theme_style" value="Dark"' "$THEME_DIR/style.xml"
+
+          # The status font is 40 px but the stock status_info_y is tuned for
+          # the 44 px battery, leaving the clock/status text 8 px high.  Move
+          # only the text down so it is centered in the 80 px status bar; the
+          # battery placement (which uses battery_y) stays unchanged.
+          STATUS="$SRC_DIR/bootable/recovery/gui/theme/portrait_hdpi/pages/templates/statusbar.xml"
+          sed -i 's/y="%status_info_y%"/y="%status_info_y%+8"/g' "$STATUS"
+          test "$(grep -c 'status_info_y%+8' "$STATUS")" -eq 6
+          echo "default theme: $(grep -o 'name="theme_style" value="[^"]*"' "$THEME_DIR/style.xml")"
+          grep -n 'status_info_y%+8' "$STATUS" | head
+
+          # The net-fix device tree keeps the status bar at the top of the
+          # panel (inside the notch area) and carries the MT6360 torch paths.
+          # Fail early if a stale branch is selected.
+          DEV_MK="$SRC_DIR/device/xiaomi/begonia/fox_begonia.mk"
+          BOARD_MK="$SRC_DIR/device/xiaomi/begonia/BoardConfig.mk"
+          grep -q '^OF_FL_PATH1 := /sys/class/leds/torch-light0$' "$DEV_MK"
+          grep -q '^OF_FL_PATH2 := /sys/class/leds/torch-light1$' "$DEV_MK"
+          grep -q '^TW_Y_OFFSET := 0$' "$BOARD_MK"
+          grep -q '^TW_H_OFFSET := 0$' "$BOARD_MK"
+
       - name: Patch wpa_supplicant for recovery
         run: |
           WPA_DIR="$SRC_DIR/external/wpa_supplicant_8"
@@ -504,6 +534,14 @@ jobs:
           fi
           test -x "$ROOT/system/bin/foxbrowse"
           test -s "$ROOT/system/etc/foxbrowse/etc/fonts.conf"
+
+          # Verify the build-time theme/status-bar edits actually reached the
+          # packed recovery root, not just the source tree.
+          grep -q 'name="theme_style" value="Dark"' "$ROOT/twres/themes/style.xml"
+          test "$(grep -c 'status_info_y%+8' "$ROOT/twres/pages/templates/statusbar.xml")" -eq 6
+          echo "=== theme/status bar ==="
+          grep -n 'name="theme_style"' "$ROOT/twres/themes/style.xml"
+          grep -n 'status_info_y%+8' "$ROOT/twres/pages/templates/statusbar.xml" | head
 
           echo "=== candidate images ==="
           find out/target/product -maxdepth 2 \
