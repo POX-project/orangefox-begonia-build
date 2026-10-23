@@ -16,9 +16,9 @@ on:
         required: false
         default: '12.1'
       device_branch:
-        description: 'Device tree branch (wifi-browser adds recovery WiFi + dashboard; unified = dynamic+erofs; both use runtime FBE v1/v2 decryption)'
+        description: 'Device tree branch (net-fix has the recovery WiFi + curl/Links2 browser payload)'
         required: false
-        default: 'wifi-browser'
+        default: 'net-fix'
       jobs:
         description: 'Parallel make jobs (2 is the safe maximum on a 16 GB hosted runner)'
         required: false
