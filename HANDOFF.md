@@ -16,7 +16,7 @@ and every result here comes from a workflow run.
 The account is **`methylphetamine`** (15 chars, id `328056449`). A misspelled
 owner resolves to *Repository not found* and looks like an auth failure.
 
-## foxkbd toolchain (fixed 2026-10-23)
+## foxkbd: prebuilt (fixed 2026-10-23)
 
 Run `39915624600` failed in *Install build dependencies*:
 
@@ -27,12 +27,17 @@ E: Unable to correct problems, you have held broken packages.
 ```
 
 The OrangeFox host tools need `gcc-multilib`, so the distro aarch64 cross
-compiler cannot be installed alongside it. Both workflows now install only the
-cross sysroot (`libc6-dev-arm64-cross`, `libgcc-11-dev-arm64-cross`,
-`binutils-aarch64-linux-gnu`, `clang`) and `tools/build-foxkbd.sh` builds the
-helper with `clang --target=aarch64-linux-gnu --sysroot=/usr/aarch64-linux-gnu`.
-That produces a ~585 KB static AArch64 ELF. `foxkbd.yml` validates this in ~1
-minute on every push to `wifi-browser`; use it before dispatching the full build.
+compiler cannot be installed in the same job. `foxkbd` is therefore committed as
+a **prebuilt** at `recovery/root/system/bin/foxkbd` (559,888 B, static AArch64,
+sha256 `9b198d96…`), and the full build only verifies it. See
+`tools/FOXKBD.md` in the device tree for provenance and the rebuild recipe.
+
+Rebuilds go through `.github/workflows/foxkbd.yml`, which installs only
+`clang` + `libc6-dev-arm64-cross` + `libgcc-11-dev-arm64-cross` and uses
+`clang --target=aarch64-linux-gnu --sysroot=/usr/aarch64-linux-gnu`
+(`tools/build-foxkbd.sh`). That path produces an equivalent static binary. The
+full build's apt list is back to the known-good set that produced the green
+`39908261882`.
 
 ## Status
 

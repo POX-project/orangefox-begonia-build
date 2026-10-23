@@ -83,13 +83,12 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
-          # gcc-aarch64-linux-gnu Conflicts with gcc-multilib, which the host
-          # 32-bit tools need; build foxkbd with clang against the cross
-          # sysroot instead (see tools/build-foxkbd.sh in the device tree).
+          # Keep this list at the known-good set: gcc-aarch64-linux-gnu
+          # Conflicts with gcc-multilib, so nothing cross-compiles here any
+          # more (foxkbd ships prebuilt, see tools/FOXKBD.md).
           sudo apt-get install -y --no-install-recommends \
-            bc bison ccache clang curl flex git git-lfs gnupg patch \
-            gcc-multilib g++-multilib binutils-aarch64-linux-gnu \
-            libc6-dev-arm64-cross libgcc-11-dev-arm64-cross \
+            bc bison ccache curl flex git git-lfs gnupg patch \
+            gcc-multilib g++-multilib \
             lib32readline-dev lib32z1-dev libelf-dev liblz4-tool \
             libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
             lz4 pngcrush python3 rsync schedtool squashfs-tools unzip \
@@ -238,19 +237,28 @@ jobs:
           echo "--- device tree ---"
           ls -la "$SRC_DIR/device/xiaomi/begonia"
 
-      - name: Build on-screen keyboard helper
+      - name: Verify on-screen keyboard helper
         run: |
+          # foxkbd is committed as a prebuilt (tools/FOXKBD.md).  Building it
+          # here needed gcc-aarch64-linux-gnu, which Conflicts with the
+          # gcc-multilib that the host tools need; the dedicated foxkbd
+          # workflow rebuilds it with clang when the source changes.
           cd "$SRC_DIR/device/xiaomi/begonia"
-          test -x tools/build-foxkbd.sh
-          WORK=/tmp/foxkbd-build ./tools/build-foxkbd.sh
           test -x recovery/root/system/bin/foxkbd
           file recovery/root/system/bin/foxkbd
+          if ! file recovery/root/system/bin/foxkbd | grep -q 'ARM aarch64'; then
+            echo "::error::foxkbd is not an AArch64 binary"
+            exit 1
+          fi
           if readelf -d recovery/root/system/bin/foxkbd | grep -q NEEDED; then
             echo "::error::foxkbd is not statically linked"
             exit 1
           fi
           echo "=== foxkbd ==="
           ls -lh recovery/root/system/bin/foxkbd
+          sha256sum recovery/root/system/bin/foxkbd
+          grep -q '^9b198d9658bab50b1b0f8cce78e74059c4220632d413d8e52383a4c46c263eb6 ' tools/FOXKBD.md \
+            || echo "::warning::foxkbd sha256 changed; update tools/FOXKBD.md"
 
       - name: Set OrangeFox default theme and status bar
         run: |
