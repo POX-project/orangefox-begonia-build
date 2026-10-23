@@ -20,9 +20,9 @@ on:
         required: false
         default: 'wifi-browser'
       jobs:
-        description: 'Parallel make jobs'
+        description: 'Parallel make jobs (2 is the safe maximum on a 16 GB hosted runner)'
         required: false
-        default: '4'
+        default: '2'
       ccache:
         description: 'Use ccache (true/false)'
         required: false
@@ -108,12 +108,22 @@ jobs:
           echo "=== swap before ==="
           swapon --show || true
           free -h
+          # Ubuntu's systemd-oomd kills the whole runner cgroup when memory
+          # pressure crosses its threshold.  AOSP's Kati and link phases can
+          # briefly use most of the 16 GB; let the kernel OOM killer pick a
+          # compiler instead of taking the runner down with exit 143.
+          sudo systemctl stop systemd-oomd systemd-oomd.socket 2>/dev/null || true
+          sudo systemctl disable systemd-oomd systemd-oomd.socket 2>/dev/null || true
+          sudo systemctl stop earlyoom 2>/dev/null || true
+          echo "oomd: $(systemctl is-active systemd-oomd 2>/dev/null || echo absent)"
           sudo timeout 120 swapoff -a || true
           sudo rm -f /swapfile
           sudo fallocate -l 8G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
+          sudo sysctl -w vm.swappiness=10 || true
+          sudo sysctl -w vm.vfs_cache_pressure=50 || true
           echo "=== swap after ==="
           swapon --show
           free -h
@@ -363,7 +373,8 @@ jobs:
         env:
           USE_CCACHE: ${{ inputs.ccache || 'true' }}
           ALLOW_MISSING_DEPENDENCIES: 'true'
-          BUILD_JOBS: ${{ inputs.jobs || '4' }}
+          MALLOC_ARENA_MAX: '2'
+          BUILD_JOBS: ${{ inputs.jobs || '2' }}
           MAKEFILE_NAME: ${{ inputs.makefile || 'twrp_begonia-eng' }}
           BUILD_TARGET: ${{ inputs.build_target || 'recoveryimage' }}
           BUILD_USERNAME: A_X
@@ -374,6 +385,23 @@ jobs:
           cd "$SRC_DIR"
           set -o pipefail
           : > build.log
+
+          # Stream memory/PSI state into the job log so a silent runner
+          # shutdown still leaves the last few samples behind.
+          : > monitor.log
+          ( while :; do
+              echo "=== $(date -u '+%Y-%m-%dT%H:%M:%SZ') ==="
+              free -h
+              cat /proc/pressure/memory 2>/dev/null || true
+              df -h "$SRC_DIR" / 2>/dev/null
+              ps -eo pid,rss,pcpu,comm --sort=-rss | head -12
+              dmesg -T 2>/dev/null | tail -20
+              sleep 30
+            done ) > monitor.log 2>&1 &
+          MON_PID=$!
+          stdbuf -oL -eL tail -n +1 -f monitor.log &
+          TAIL_PID=$!
+          echo "monitor pid $MON_PID, tail pid $TAIL_PID -> $SRC_DIR/monitor.log"
 
           # OrangeFox's envsetup hook ends with an optional VTS test and
           # returns 1 when frameworks/base/services/core/xsd/vts/Android.mk
@@ -408,6 +436,7 @@ jobs:
           mka "$BUILD_TARGET" -j"$BUILD_JOBS" \
             BUILD_USERNAME="$BUILD_USERNAME" \
             BUILD_HOSTNAME=poxproject 2>&1 | tee -a build.log
+          kill "$MON_PID" "$TAIL_PID" 2>/dev/null || true
 
       - name: Locate and verify output image
         id: image
