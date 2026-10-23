@@ -83,9 +83,13 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
+          # gcc-aarch64-linux-gnu Conflicts with gcc-multilib, which the host
+          # 32-bit tools need; build foxkbd with clang against the cross
+          # sysroot instead (see tools/build-foxkbd.sh in the device tree).
           sudo apt-get install -y --no-install-recommends \
-            bc bison ccache curl flex git git-lfs gnupg patch \
-            gcc-multilib g++-multilib gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+            bc bison ccache clang curl flex git git-lfs gnupg patch \
+            gcc-multilib g++-multilib binutils-aarch64-linux-gnu \
+            libc6-dev-arm64-cross libgcc-11-dev-arm64-cross \
             lib32readline-dev lib32z1-dev libelf-dev liblz4-tool \
             libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
             lz4 pngcrush python3 rsync schedtool squashfs-tools unzip \
