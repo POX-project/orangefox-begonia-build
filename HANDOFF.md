@@ -1,6 +1,6 @@
 # Handoff - begonia recovery browser / OrangeFox / AERA
 
-Last updated: 2026-10-23.
+Last updated: 2026-10-23 (both new builds still in progress).
 
 ## Repositories
 - Device tree: `methylphetamine/device_xiaomi_begonia-orangefox` (branch `net-fix`)
@@ -16,6 +16,11 @@ Last updated: 2026-10-23.
 - OrangeFox: `39915624600` (in progress) - builds keyboard payload + full image.
 - AERA: `39915596506` (in progress) - jobs=1, recoveryimage, GOMEMLIMIT=4GiB.
 - foxkbd quick check: `39914843578` (success) - static aarch64 binary uploaded.
+
+## Latest status
+- OrangeFox `39915624600`: in progress.
+- AERA `39915596506`: in progress.
+- foxkbd quick build `39914843578`: success (static binary verified).
 
 ## Verified
 - OrangeFox artifact `39908261882` (pre-keyboard, successful) has:
