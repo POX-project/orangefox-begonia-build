@@ -1,5 +1,13 @@
 # OrangeFox build for begonia
 
+<p align="center">
+  <img src="https://avatars.githubusercontent.com/u/328056449?v=4" width="100" height="100" alt="Builder" style="border-radius: 50%;">
+</p>
+
+<p align="center">
+  <strong>Builder & Maintainer:</strong> <a href="https://github.com/${ghuser}">${ghuser}</a>
+</p>
+
 GitHub Actions builder for OrangeFox Recovery on the Xiaomi Redmi Note 8 Pro
 (`begonia`).
 
