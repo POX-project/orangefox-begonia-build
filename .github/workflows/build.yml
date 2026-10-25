@@ -254,19 +254,6 @@ jobs:
           ls -lh recovery/root/system/etc/foxbrowse/bin/netsurf-fb
           sha256sum recovery/root/system/etc/foxbrowse/bin/netsurf-fb
 
-      - name: Create enhanced arorafm-style ZIP package with NetSurf browser
-        run: |
-          cd "$SRC_DIR/device/xiaomi/begonia"
-          # Execute the device tree script to create the enhanced ZIP
-          tools/create-arorafm-zip.sh
-          # Verify the enhanced ZIP was created
-          if [ -z "$(find . -maxdepth 1 -name 'OrangeFox-begonia-arorafm-enhanced-*.zip' 2>/dev/null)" ]; then
-            echo "::error::enhanced ZIP package was not created"
-            exit 1
-          fi
-          echo "=== enhanced ZIP contents (preview) ==="
-          unzip -l "$(find . -maxdepth 1 -name 'OrangeFox-begonia-arorafm-enhanced-*.zip' 2>/dev/null | head -1)" | sed -n '1,100p'
-
       - name: Set OrangeFox default theme and status bar
         run: |
           THEME_DIR="$SRC_DIR/bootable/recovery/gui/theme/portrait_hdpi/themes"
@@ -549,7 +536,7 @@ jobs:
           # Files under /system/etc are packed 0644 by fs_config; the wrappers
           # restore the exec bit at runtime.
           test -e "$ROOT/system/etc/foxnet/bin/curl"
-          test -e "$ROOT/system/etc/foxbrowse/bin/links"
+          test -e "$ROOT/system/etc/foxbrowse/bin/netsurf-fb"
 
           echo "=== static curl ==="
           file "$ROOT/system/etc/foxnet/bin/curl"
@@ -781,14 +768,6 @@ jobs:
         with:
           name: orangefox-begonia-recovery
           path: recovery.img
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload enhanced arorafm-style ZIP artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: orangefox-begonia-enhanced-arorafm
-          path: "$(find $SRC_DIR/device/xiaomi/begonia -maxdepth 1 -name 'OrangeFox-begonia-arorafm-enhanced-*.zip' 2>/dev/null | head -1)"
           if-no-files-found: error
           retention-days: 30
 
