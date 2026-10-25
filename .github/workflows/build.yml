@@ -254,19 +254,6 @@ jobs:
           ls -lh recovery/root/system/etc/foxbrowse/bin/netsurf-fb
           sha256sum recovery/root/system/etc/foxbrowse/bin/netsurf-fb
 
-      - name: Create enhanced arorafm-style ZIP package with NetSurf browser
-        run: |
-          cd "$SRC_DIR/device/xiaomi/begonia"
-          # Execute the device tree script to create the enhanced ZIP
-          tools/create-arorafm-zip.sh
-          # Verify the enhanced ZIP was created
-          if [ -z "$(find . -maxdepth 1 -name 'OrangeFox-begonia-arorafm-enhanced-*.zip' 2>/dev/null)" ]; then
-            echo "::error::enhanced ZIP package was not created"
-            exit 1
-          fi
-          echo "=== enhanced ZIP contents (preview) ==="
-          unzip -l "$(find . -maxdepth 1 -name 'OrangeFox-begonia-arorafm-enhanced-*.zip' 2>/dev/null | head -1)" | sed -n '1,50p'
-
       - name: Set OrangeFox default theme and status bar
         run: |
           THEME_DIR="$SRC_DIR/bootable/recovery/gui/theme/portrait_hdpi/themes"
@@ -670,6 +657,19 @@ jobs:
           echo "zip_path=$ZIP_PATH" >> "$GITHUB_OUTPUT"
           echo "zip_sha256=$ZIP_SHA" >> "$GITHUB_OUTPUT"
           echo "zip_size=$ZIP_SIZE" >> "$GITHUB_OUTPUT"
+
+      - name: Create enhanced arorafm-style ZIP package with NetSurf browser
+        run: |
+          cd "$SRC_DIR/device/xiaomi/begonia"
+          # Execute the device tree script to create the enhanced ZIP
+          tools/create-arorafm-zip.sh
+          # Verify the enhanced ZIP was created
+          if [ -z "$(find . -maxdepth 1 -name 'OrangeFox-begonia-arorafm-enhanced-*.zip' 2>/dev/null)" ]; then
+            echo "::error::enhanced ZIP package was not created"
+            exit 1
+          fi
+          echo "=== enhanced ZIP contents (preview) ==="
+          unzip -l "$(find . -maxdepth 1 -name 'OrangeFox-begonia-arorafm-enhanced-*.zip' 2>/dev/null | head -1)" | sed -n '1,50p'
 
       - name: Upload to Gofile
         id: gofile
