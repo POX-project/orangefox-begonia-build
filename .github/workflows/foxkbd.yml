@@ -16,7 +16,7 @@ jobs:
       - name: Checkout device tree
         uses: actions/checkout@v4
         with:
-          repository: methylphetamine/device_xiaomi_begonia-orangefox
+          repository: ${{ github.repository_owner }}/device_xiaomi_begonia-orangefox
           ref: net-fix
           path: device
           fetch-depth: 1

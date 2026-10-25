@@ -42,7 +42,7 @@ permissions:
 env:
   FOX_SYNC_URL: 'https://gitlab.com/OrangeFox/sync.git'
   FOX_SYNC_BRANCH: ${{ github.event.inputs.fox_branch || '12.1' }}
-  DEVICE_TREE_URL: 'https://github.com/methylphetamine/device_xiaomi_begonia-orangefox.git'
+  DEVICE_TREE_URL: 'https://github.com/${{ github.repository_owner }}/device_xiaomi_begonia-orangefox.git'
   DEVICE_TREE_BRANCH: ${{ github.event.inputs.device_branch || 'net-fix' }}
   SRC_DIR: 'aosp'
   FOX_BUILD_TYPE: 'Unofficial'

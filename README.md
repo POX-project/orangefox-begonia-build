@@ -4,7 +4,7 @@ GitHub Actions builder for OrangeFox Recovery on the Xiaomi Redmi Note 8 Pro
 (`begonia`).
 
 - OrangeFox sync branch: `12.1`
-- Device tree: `methylphetamine/device_xiaomi_begonia-orangefox` (`wifi-browser`)
+- Device tree: `${ghuser}/device_xiaomi_begonia-orangefox` (`wifi-browser`)
 - Lunch target: `twrp_begonia-eng`
 - Outputs: `recovery.img` and the official OrangeFox installer ZIP
   `OrangeFox-R12.0-Unofficial-begonia.zip` (includes the default `sdcard/Fox`

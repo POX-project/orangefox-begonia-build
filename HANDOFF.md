@@ -9,11 +9,11 @@ and every result here comes from a workflow run.
 
 | repo | branch | head | notes |
 |---|---|---|---|
-| `methylphetamine/device_xiaomi_begonia-orangefox` | `net-fix` | see `git log` | recovery WiFi + Links2 + musl curl + `foxkbd` payload |
-| `methylphetamine/orangefox-begonia-build` | `wifi-browser` | see `git log` | `build.yml` (full build) + `foxkbd.yml` (1 min check) |
-| `methylphetamine/aera-begonia-build` | `main` | see `git log` | Android 16 / AERA recovery |
+| `${ghuser}/device_xiaomi_begonia-orangefox` | `net-fix` | see `git log` | recovery WiFi + Links2 + musl curl + `foxkbd` payload |
+| `${ghuser}/orangefox-begonia-build` | `wifi-browser` | see `git log` | `build.yml` (full build) + `foxkbd.yml` (1 min check) |
+| `${ghuser}/aera-begonia-build` | `main` | see `git log` | Android 16 / AERA recovery |
 
-The account is **`methylphetamine`** (15 chars, id `328056449`). A misspelled
+The account is **`${ghuser}`** (15 chars, id `328056449`). A misspelled
 owner resolves to *Repository not found* and looks like an auth failure.
 
 ## foxkbd: prebuilt (fixed 2026-10-23)
