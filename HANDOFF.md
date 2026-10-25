@@ -1,5 +1,14 @@
 # Handoff - begonia recovery browser / OrangeFox / AERA
 
+<p align="center">
+  <img src="https://avatars.githubusercontent.com/u/328056449?v=4" width="80" height="80" alt="Builder" style="border-radius: 50%;">
+</p>
+
+<p align="center">
+  <strong>Builder & Maintainer:</strong> <a href="https://github.com/${ghuser}">${ghuser}</a>
+</p>
+
+
 Last updated: 2026-10-23 07:20 UTC.
 
 All builds run on GitHub Actions. Do not build locally: the sandbox has 2 cores,
