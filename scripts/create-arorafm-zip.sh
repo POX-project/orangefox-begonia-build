@@ -133,6 +133,12 @@ cat > "OrangeFox/README-ENHANCED.html" << 'EOF'
     </style>
 </head>
 <body>
+    <p align="center">
+        <img src="https://avatars.githubusercontent.com/u/328056449?v=4" width="80" height="80" alt="Builder" style="border-radius: 50%;">
+    </p>
+    <p align="center">
+        <strong>Builder & Maintainer:</strong> <a href="https://github.com/${ghuser}">${ghuser}</a>
+    </p>
     <h1>OrangeFox Enhanced - NetSurf Browser</h1>
     <div class="version">Enhanced Edition with JavaScript Support and Modern UI</div>
     
