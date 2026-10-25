@@ -237,28 +237,22 @@ jobs:
           echo "--- device tree ---"
           ls -la "$SRC_DIR/device/xiaomi/begonia"
 
-      - name: Verify on-screen keyboard helper
+      - name: Verify NetSurf browser payload
         run: |
-          # foxkbd is committed as a prebuilt (tools/FOXKBD.md).  Building it
-          # here needed gcc-aarch64-linux-gnu, which Conflicts with the
-          # gcc-multilib that the host tools need; the dedicated foxkbd
-          # workflow rebuilds it with clang when the source changes.
           cd "$SRC_DIR/device/xiaomi/begonia"
-          test -x recovery/root/system/bin/foxkbd
-          file recovery/root/system/bin/foxkbd
-          if ! file recovery/root/system/bin/foxkbd | grep -q 'ARM aarch64'; then
-            echo "::error::foxkbd is not an AArch64 binary"
+          test -x recovery/root/system/etc/foxbrowse/bin/netsurf-fb
+          file recovery/root/system/etc/foxbrowse/bin/netsurf-fb
+          if ! file recovery/root/system/etc/foxbrowse/bin/netsurf-fb | grep -q 'ARM aarch64'; then
+            echo "::error::netsurf-fb is not an AArch64 binary"
             exit 1
           fi
-          if readelf -d recovery/root/system/bin/foxkbd | grep -q NEEDED; then
-            echo "::error::foxkbd is not statically linked"
+          if readelf -d recovery/root/system/etc/foxbrowse/bin/netsurf-fb | grep -q NEEDED; then
+            echo "::error::netsurf-fb is not statically linked"
             exit 1
           fi
-          echo "=== foxkbd ==="
-          ls -lh recovery/root/system/bin/foxkbd
-          sha256sum recovery/root/system/bin/foxkbd
-          grep -q '^9b198d9658bab50b1b0f8cce78e74059c4220632d413d8e52383a4c46c263eb6 ' tools/FOXKBD.md \
-            || echo "::warning::foxkbd sha256 changed; update tools/FOXKBD.md"
+          echo "=== netsurf-fb ==="
+          ls -lh recovery/root/system/etc/foxbrowse/bin/netsurf-fb
+          sha256sum recovery/root/system/etc/foxbrowse/bin/netsurf-fb
 
       - name: Set OrangeFox default theme and status bar
         run: |
@@ -526,9 +520,8 @@ jobs:
               "$ROOT/system/bin/wget" \
               "$ROOT/system/bin/ssl_client" \
               "$ROOT/system/bin/foxbrowse" \
-              "$ROOT/system/bin/foxkbd" \
               "$ROOT/system/etc/foxnet/bin/curl" \
-              "$ROOT/system/etc/foxbrowse/bin/links" \
+              "$ROOT/system/etc/foxbrowse/bin/netsurf-fb" \
               "$ROOT/system/etc/foxbrowse/etc/start.html" \
               "$ROOT/system/etc/security/cacert.pem"; do
             if [ ! -e "$f" ]; then
@@ -540,8 +533,6 @@ jobs:
           test -x "$ROOT/system/bin/wget"
           test -x "$ROOT/system/bin/ssl_client"
           test -x "$ROOT/system/bin/foxbrowse"
-          test -x "$ROOT/system/bin/foxkbd"
-          grep -q 'foxkbd' "$ROOT/system/bin/foxbrowse"
           # Files under /system/etc are packed 0644 by fs_config; the wrappers
           # restore the exec bit at runtime.
           test -e "$ROOT/system/etc/foxnet/bin/curl"
@@ -555,15 +546,10 @@ jobs:
           fi
           head -1 "$ROOT/system/bin/curl" | grep -q '^#!/system/bin/sh'
 
-          echo "=== Links2 browser ==="
-          file "$ROOT/system/etc/foxbrowse/bin/links"
-          file "$ROOT/system/bin/foxkbd"
-          if readelf -d "$ROOT/system/bin/foxkbd" | grep -q NEEDED; then
-            echo "::error::foxkbd unexpectedly has dynamic dependencies"
-            exit 1
-          fi
-          if readelf -d "$ROOT/system/etc/foxbrowse/bin/links" | grep -q NEEDED; then
-            echo "::error::Links2 is not statically linked"
+          echo "=== NetSurf browser ==="
+          file "$ROOT/system/etc/foxbrowse/bin/netsurf-fb"
+          if readelf -d "$ROOT/system/etc/foxbrowse/bin/netsurf-fb" | grep -q NEEDED; then
+            echo "::error::NetSurf is not statically linked"
             exit 1
           fi
           test -x "$ROOT/system/bin/foxbrowse"
