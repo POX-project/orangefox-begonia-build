@@ -659,6 +659,7 @@ jobs:
           echo "zip_size=$ZIP_SIZE" >> "$GITHUB_OUTPUT"
 
       - name: Create enhanced arorafm-style ZIP package with NetSurf browser
+        id: enhanced
         run: |
           cd "$SRC_DIR/device/xiaomi/begonia"
           # Derive the enhanced installer from the already verified official
@@ -679,68 +680,112 @@ jobs:
         id: gofile
         if: success()
         continue-on-error: true
+        env:
+          OFFICIAL_ZIP: ${{ steps.flashable.outputs.zip_name }}
+          ENHANCED_ZIP: ${{ steps.enhanced.outputs.zip_path }}
         run: |
           cd "$GITHUB_WORKSPACE"
-          ZIP_NAME="${{ steps.flashable.outputs.zip_name }}"
-          test -f "$ZIP_NAME"
+          test -f "$OFFICIAL_ZIP"
           SRV=$(curl -fsSL https://api.gofile.io/servers | jq -r '.data.servers[0].name // empty')
           if [ -z "$SRV" ]; then
             echo "::warning::Gofile returned no upload server"
             exit 0
           fi
-          HTTP=$(curl -sS -o /tmp/gofile.json -w '%{http_code}' \
-            -F "file=@${ZIP_NAME}" "https://${SRV}.gofile.io/contents/uploadfile" || true)
-          URL=$(jq -r '.data.downloadPage // empty' /tmp/gofile.json 2>/dev/null || true)
-          if [ "$HTTP" != "200" ] || [ -z "$URL" ]; then
-            echo "::warning::Gofile upload failed (HTTP ${HTTP:-?})"
-            exit 0
-          fi
-          echo "gofile_url=$URL" >> "$GITHUB_OUTPUT"
-          echo "Gofile: $URL ($ZIP_NAME)"
 
-      - name: Upload flashable ZIP to Telegram
+          upload() {
+            file="$1"
+            key="$2"
+            if [ ! -f "$file" ]; then
+              echo "::warning::Gofile: $file is missing, skipping"
+              return 0
+            fi
+            http=$(curl -sS -o /tmp/gofile.json -w '%{http_code}' \
+              -F "file=@${file}" "https://${SRV}.gofile.io/contents/uploadfile" || true)
+            url=$(jq -r '.data.downloadPage // empty' /tmp/gofile.json 2>/dev/null || true)
+            if [ "$http" != "200" ] || [ -z "$url" ]; then
+              echo "::warning::Gofile upload failed for $file (HTTP ${http:-?})"
+              return 0
+            fi
+            echo "${key}_url=$url" >> "$GITHUB_OUTPUT"
+            echo "Gofile: $url ($file)"
+          }
+
+          upload "$OFFICIAL_ZIP" official
+          if [ -n "$ENHANCED_ZIP" ]; then
+            upload "$(basename "$ENHANCED_ZIP")" enhanced
+          fi
+
+      - name: Upload flashable ZIPs to Telegram
         if: success()
         continue-on-error: true
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GOFILE_URL: ${{ steps.gofile.outputs.gofile_url }}
-          ZIP_NAME: ${{ steps.flashable.outputs.zip_name }}
-          ZIP_SHA: ${{ steps.flashable.outputs.zip_sha256 }}
-          ZIP_SIZE: ${{ steps.flashable.outputs.zip_size }}
+          OFFICIAL_ZIP: ${{ steps.flashable.outputs.zip_name }}
+          OFFICIAL_SHA: ${{ steps.flashable.outputs.zip_sha256 }}
+          OFFICIAL_SIZE: ${{ steps.flashable.outputs.zip_size }}
+          OFFICIAL_URL: ${{ steps.gofile.outputs.official_url }}
+          ENHANCED_ZIP: ${{ steps.enhanced.outputs.zip_path }}
+          ENHANCED_SHA: ${{ steps.enhanced.outputs.zip_sha256 }}
+          ENHANCED_SIZE: ${{ steps.enhanced.outputs.zip_size }}
+          ENHANCED_URL: ${{ steps.gofile.outputs.enhanced_url }}
         run: |
           cd "$GITHUB_WORKSPACE"
           if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
             echo "::warning::TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not configured"
             exit 0
           fi
-          test -f "$ZIP_NAME"
-          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          CAPTION=$(printf 'OrangeFox official installer ZIP - begonia (recovery.img + sdcard/Fox tools)\nZIP SHA256: %s\nGofile: %s\nRun: %s' \
-            "$ZIP_SHA" "${GOFILE_URL:-n/a}" "$RUN_URL")
+          test -f "$OFFICIAL_ZIP"
           API="https://api.telegram.org/bot${TG_TOKEN}"
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
-          if [ "$ZIP_SIZE" -le 49000000 ]; then
+          send_doc() {
+            file="$1"
+            title="$2"
+            sha="$3"
+            size="$4"
+            url="$5"
+            if [ ! -f "$file" ]; then
+              return 0
+            fi
+            if [ "${size:-0}" -gt 49000000 ]; then
+              echo "::warning::Telegram: $title is $size bytes, too large to upload; link only"
+              return 0
+            fi
+            CAPTION=$(printf '%s\nSHA256: %s\nGofile: %s\nRun: %s' \
+              "$title" "$sha" "${url:-n/a}" "$RUN_URL")
             curl -sS -o /tmp/tg.json \
               -F "chat_id=${TG_CHAT}" \
-              -F "document=@${ZIP_NAME}" \
+              -F "document=@${file}" \
               --form-string "caption=${CAPTION}" \
               "${API}/sendDocument" || true
             if jq -e '.ok == true' /tmp/tg.json >/dev/null 2>&1; then
-              echo "Telegram: ${ZIP_NAME} sent as a document"
-              exit 0
+              echo "Telegram: $title sent as a document"
+            else
+              echo "::warning::Telegram: sendDocument failed for $title"
             fi
-            echo "::warning::Telegram sendDocument failed; sending a link instead"
+          }
+
+          send_doc "$OFFICIAL_ZIP" \
+            "OrangeFox official installer ZIP - begonia (recovery.img + sdcard/Fox tools)" \
+            "$OFFICIAL_SHA" "$OFFICIAL_SIZE" "$OFFICIAL_URL"
+
+          if [ -n "$ENHANCED_ZIP" ] && [ -f "$(basename "$ENHANCED_ZIP")" ]; then
+            send_doc "$(basename "$ENHANCED_ZIP")" \
+              "OrangeFox enhanced ZIP - begonia (NetSurf browser + sdcard/Fox/FoxFiles/NetSurf)" \
+              "$ENHANCED_SHA" "$ENHANCED_SIZE" "$ENHANCED_URL"
           fi
 
-          TEXT=$(printf 'OrangeFox official installer ZIP - begonia (recovery.img + sdcard/Fox tools)\nZIP SHA256: %s\nGofile: %s\nRun: %s\nZIP size: %s bytes' \
-            "$ZIP_SHA" "${GOFILE_URL:-n/a}" "$RUN_URL" "$ZIP_SIZE")
+          TEXT=$(printf 'OrangeFox recovery - begonia\n\nOfficial ZIP: %s\nSHA256: %s\nSize: %s bytes\nGofile: %s\n\nEnhanced (NetSurf) ZIP: %s\nSHA256: %s\nSize: %s bytes\nGofile: %s\n\nRun: %s' \
+            "$OFFICIAL_ZIP" "$OFFICIAL_SHA" "$OFFICIAL_SIZE" "${OFFICIAL_URL:-n/a}" \
+            "$(basename "${ENHANCED_ZIP:-none}")" "${ENHANCED_SHA:-n/a}" "${ENHANCED_SIZE:-n/a}" "${ENHANCED_URL:-n/a}" \
+            "$RUN_URL")
           curl -sS -o /tmp/tg.json \
             --data-urlencode "chat_id=${TG_CHAT}" \
             --data-urlencode "text=${TEXT}" \
             "${API}/sendMessage" || true
           if jq -e '.ok == true' /tmp/tg.json >/dev/null 2>&1; then
-            echo "Telegram: link sent"
+            echo "Telegram: summary sent"
           else
             echo "::warning::Telegram notification failed"
           fi
@@ -826,8 +871,18 @@ jobs:
           ZIP_NAME="${{ steps.flashable.outputs.zip_name }}"
           ZIP_SHA="${{ steps.flashable.outputs.zip_sha256 }}"
           ZIP_SIZE="${{ steps.flashable.outputs.zip_size }}"
+          ENH_PATH="${{ steps.enhanced.outputs.zip_path }}"
+          ENH_NAME=$(basename "${ENH_PATH:-none}")
+          ENH_SHA="${{ steps.enhanced.outputs.zip_sha256 }}"
+          ENH_SIZE="${{ steps.enhanced.outputs.zip_size }}"
           test -f "$ZIP_NAME"
-          TAG="${GITHUB_REF_NAME:-twrp-begonia-$(date +%Y%m%d%H%M%S)}"
+          # GITHUB_REF_NAME is the branch name on workflow_dispatch, so only
+          # reuse it when this run was triggered by a tag push (v*).
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            TAG="orangefox-begonia-$(date +%Y%m%d-%H%M)"
+          fi
           {
             echo "OrangeFox recovery for Redmi Note 8 Pro (begonia)"
             echo
@@ -835,9 +890,17 @@ jobs:
             echo "- recovery.img sha256: \`$SHA\`"
             echo "- official flashable ZIP (includes default \`sdcard/Fox\` tools): \`$ZIP_NAME\`"
             echo "- flashable ZIP sha256: \`$ZIP_SHA\`"
+            echo "- enhanced ZIP (official installer + \`sdcard/Fox/FoxFiles/NetSurf\`): \`$ENH_NAME\`"
+            echo "- enhanced ZIP sha256: \`$ENH_SHA\`"
             echo "- flashable ZIP size: $ZIP_SIZE bytes"
+            echo "- enhanced ZIP size: $ENH_SIZE bytes"
             echo "- built by run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > release-notes.md
-          gh release create "$TAG" recovery.img "$ZIP_NAME" \
+          ASSETS="recovery.img $ZIP_NAME"
+          if [ -n "$ENH_PATH" ] && [ -f "$ENH_NAME" ]; then
+            ASSETS="$ASSETS $ENH_NAME"
+          fi
+          # shellcheck disable=SC2086
+          gh release create "$TAG" $ASSETS \
             --title "OrangeFox begonia $TAG" --notes-file release-notes.md || \
-          gh release upload "$TAG" recovery.img "$ZIP_NAME" --clobber
+          gh release upload "$TAG" $ASSETS --clobber

@@ -5,69 +5,96 @@
 </p>
 
 <p align="center">
-  <strong>Builder & Maintainer:</strong> <a href="https://github.com/${ghuser}">${ghuser}</a>
+  <strong>Builder & Maintainer:</strong> <a href="https://github.com/methylphetamine">methylphetamine</a>
 </p>
 
-
-Last updated: 2026-10-23 07:20 UTC.
+Last updated: 2026-10-25 10:00 UTC.
 
 All builds run on GitHub Actions. Do not build locally: the sandbox has 2 cores,
 and every result here comes from a workflow run.
 
 ## Repositories
 
-| repo | branch | head | notes |
-|---|---|---|---|
-| `${ghuser}/device_xiaomi_begonia-orangefox` | `net-fix` | see `git log` | recovery WiFi + Links2 + musl curl + `foxkbd` payload |
-| `${ghuser}/orangefox-begonia-build` | `wifi-browser` | see `git log` | `build.yml` (full build) + `foxkbd.yml` (1 min check) |
-| `${ghuser}/aera-begonia-build` | `main` | see `git log` | Android 16 / AERA recovery |
+| repo | branch | notes |
+|---|---|---|
+| `methylphetamine/device_xiaomi_begonia-orangefox` | `net-fix` | recovery WiFi + NetSurf (`foxbrowse`) + musl curl + `foxkbd` |
+| `methylphetamine/orangefox-begonia-build` | `wifi-browser` | `build.yml` (full build) + `foxkbd.yml` (1 min check) |
+| `methylphetamine/aera-begonia-build` | `main` | Android 16 / AERA recovery |
 
-The account is **`${ghuser}`** (15 chars, id `328056449`). A misspelled
+The account is **`methylphetamine`** (15 chars, id `328056449`). A misspelled
 owner resolves to *Repository not found* and looks like an auth failure.
 
-## foxkbd: prebuilt (fixed 2026-10-23)
+## Status (2026-10-25)
 
-Run `39915624600` failed in *Install build dependencies*:
+- OrangeFox full build `40171521596` (`wifi-browser`, device tree `net-fix`):
+  **green**. It produced `recovery.img` (fits the 64 MiB partition), the
+  official installer ZIP and the enhanced NetSurf ZIP, and the build-time
+  checks confirmed `netsurf-fb` is a static AArch64 binary inside the ramdisk.
+- `foxkbd.yml` has not been needed since the NetSurf switch; `foxkbd` is no
+  longer part of the ramdisk.
+- AERA `39915596506`: see the AERA repo; not touched today.
 
+## Browser (`foxbrowse`)
+
+NetSurf 3.11 (static AArch64, Duktape JS, framebuffer + built-in on-screen
+keyboard) replaced Links2. `foxkbd` and the Links2 payload are gone.
+
+Fixed today, after the report that `foxbrowse` exited immediately ("crash") and
+that the enhanced ZIP was missing:
+
+1. **Resources were never found.** NetSurf's compiled-in resource path is the
+   build tree (`/tmp/opencode/ns-install/share/netsurf`), so on the device it
+   loaded no `Messages`, no `default.css` and no `Choices`. The launcher now
+   exports `NETSURFRES=/system/etc/foxbrowse/netsurf`.
+2. **`HOME` was `/tmp`**, which also holds the recovery logs. It is now a
+   dedicated `/tmp/foxbrowse-home` with `$HOME/.netsurf` pre-created.
+3. **Geometry is now explicit.** The launcher reads
+   `/sys/class/graphics/fb0/virtual_size` and `bits_per_pixel` and passes
+   `-w/-h/-b`, then retries once with auto-detection if NetSurf still fails.
+   A wrong bpp/geometry makes the framebuffer surface fail instantly.
+4. **Failures are visible.** `foxbrowse` writes to `/tmp/foxbrowse.log`,
+   `/tmp/recovery.log` (Advanced -> View log) and `/dev/kmsg`, instead of
+   letting the error die in the pty that is hidden while the GUI is stopped.
+5. **Pre-flight check.** If neither `/dev/graphics/fb0` nor `/dev/fb0` exists,
+   the launcher reports and exits without freezing the GUI (no more
+   freeze/resume flicker that looks like a crash).
+6. **Fonts.** `fonts.conf` lists `/system/etc/foxbrowse/fonts` (the shipped
+   DejaVu set) before `/twres/fonts`, so the browser never depends on the
+   theme font set.
+
+New commands:
+
+```sh
+foxbrowse --diag       # framebuffer, geometry, input, resources, fonts, CA
+foxbrowse --selftest   # headless 3 s run on the ram surface
 ```
-gcc-11-aarch64-linux-gnu : Conflicts: gcc-multilib but 4:11.2.0-1ubuntu1 is to be installed
-gcc-multilib : Conflicts: gcc-11-aarch64-linux-gnu but 11.4.0-1ubuntu1~22.04.3cross1 is to be installed
-E: Unable to correct problems, you have held broken packages.
-```
 
-The OrangeFox host tools need `gcc-multilib`, so the distro aarch64 cross
-compiler cannot be installed in the same job. `foxkbd` is therefore committed as
-a **prebuilt** at `recovery/root/system/bin/foxkbd` (559,888 B, static AArch64,
-sha256 `9b198d96…`), and the full build only verifies it. See
-`tools/FOXKBD.md` in the device tree for provenance and the rebuild recipe.
+If the browser still fails on the device, `foxbrowse --diag` plus
+`/tmp/foxbrowse.log` describe the exact state; the log now survives the run.
 
-Rebuilds go through `.github/workflows/foxkbd.yml`, which installs only
-`clang` + `libc6-dev-arm64-cross` + `libgcc-11-dev-arm64-cross` and uses
-`clang --target=aarch64-linux-gnu --sysroot=/usr/aarch64-linux-gnu`
-(`tools/build-foxkbd.sh`). That path produces an equivalent static binary. The
-full build's apt list is back to the known-good set that produced the green
-`39908261882`.
+## Enhanced ZIP
 
-## Status
+`tools/create-arorafm-zip.sh` (device tree) derives the enhanced installer from
+the official ZIP: same `META-INF` and byte-identical `recovery.img`, plus the
+NetSurf userspace files under `sdcard/Fox/FoxFiles/NetSurf/`, re-signed with
+the AOSP testkey.
 
-- OrangeFox full build `39915624600` (device tree `net-fix`, `jobs=2`): failed in
-  11 s at apt, cause above. Nothing was synced or compiled.
-- OrangeFox `39908261882` (pre-keyboard, `net-fix`) was green. Verified in the
-  artifact: dark theme default, status bar kept at top, MT6360 torch paths
-  `torch-light0`/`torch-light1`, `foxbrowse` + Links2 + musl curl payload.
-- AERA `39915596506` (`3e2b1d0`, `jobs=1`, `GOMEMLIMIT=4GiB`): running.
-- AERA `39902833430` (`59b50d6`) lost the runner again during Compile: the step
-  stayed `in_progress`, the run was only finalized as failure after ~2 h, and no
-  compile diagnostic was produced. Memory pressure, not the compiler.
+The file used to exist **only** as a 30-day Actions artifact, which is why it
+looked missing. The workflow now also:
+
+- uploads it to Gofile (`enhanced_url`),
+- posts it to Telegram (document when it fits, otherwise a link),
+- attaches it to the GitHub release when `publish_release` is enabled.
+
+The stale `scripts/create-arorafm-zip.sh` in the builder repo (it used `ncp`
+and a non-existent `ofox-net/` tree, and could never succeed) was deleted; the
+device-tree script is the only implementation.
 
 ## Pending
 
-1. Confirm `foxkbd.yml` is green on the new toolchain path.
-2. Dispatch the full OrangeFox build (`device_branch=net-fix`, `jobs=2`) and
-   verify `foxkbd` is in the ramdisk and that the ZIP stays within the 64 MB
-   recovery partition.
-3. Watch AERA `39915596506`; if the runner dies again, reduce further
-   (GOMEMLIMIT 3 GiB, no ccache) and treat 16 GB hosted runners as unsuitable
-   for AOSP 16.
-4. No device testing available (no adb/fastboot) - the on-device checklist in
+1. Re-run the full build and confirm `foxbrowse` on the device (WiFi dashboard
+   -> terminal: `foxbrowse --diag`, then `foxbrowse`).
+2. Confirm both ZIPs land in Gofile/Telegram, and in the release when
+   `publish_release` is set.
+3. No device testing available (no adb/fastboot) - the on-device checklist in
    the handoff repo still applies.

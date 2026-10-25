@@ -12,7 +12,7 @@ GitHub Actions builder for OrangeFox Recovery on the Xiaomi Redmi Note 8 Pro
 (`begonia`).
 
 - OrangeFox sync branch: `12.1`
-- Device tree: `${ghuser}/device_xiaomi_begonia-orangefox` (`wifi-browser`)
+- Device tree: `${ghuser}/device_xiaomi_begonia-orangefox` (`net-fix`)
 - Lunch target: `twrp_begonia-eng`
 - Outputs: `recovery.img` and the official OrangeFox installer ZIP
   `OrangeFox-R12.0-Unofficial-begonia.zip` (includes the default `sdcard/Fox`
@@ -63,7 +63,9 @@ and a browser dashboard to recovery:
   userspace files under `sdcard/Fox/FoxFiles/NetSurf/` (AromaFM-style). The
   modified archive is re-signed with the AOSP testkey, so keep ZIP signature
   verification disabled in recovery (the OrangeFox default). It is uploaded as
-  the `orangefox-begonia-enhanced-arorafm` artifact.
+  the `orangefox-begonia-enhanced-arorafm` artifact **and** published next to
+  the official ZIP: both are uploaded to Gofile and posted to Telegram, and
+  both are attached to the GitHub release when `publish_release` is set.
 
 ## Decryption (FBE v1 and v2)
 
