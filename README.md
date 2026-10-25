@@ -57,6 +57,13 @@ and a browser dashboard to recovery:
   `orangefox-begonia-recovery` image artifact. Only the embedded image needs to
   fit the 64 MiB partition; the installer ZIP is about 74 MB, so Telegram falls
   back to a download link.
+- An **enhanced** installer ZIP is derived from that official ZIP
+  (`tools/create-arorafm-zip.sh` in the device tree). It keeps the official
+  installer payload and byte-identical `recovery.img`, and adds the NetSurf
+  userspace files under `sdcard/Fox/FoxFiles/NetSurf/` (AromaFM-style). The
+  modified archive is re-signed with the AOSP testkey, so keep ZIP signature
+  verification disabled in recovery (the OrangeFox default). It is uploaded as
+  the `orangefox-begonia-enhanced-arorafm` artifact.
 
 ## Decryption (FBE v1 and v2)
 
