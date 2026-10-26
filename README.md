@@ -1,3 +1,18 @@
+<p align="center">
+  <a href="https://github.com/methylphetamine">
+    <img src="https://github.com/methylphetamine.png?size=200" width="120" height="120" alt="A X">
+  </a>
+</p>
+
+<h3 align="center">A X</h3>
+
+<p align="center">
+  <strong>Maintainer &amp; Builder</strong><br>
+  <a href="https://github.com/methylphetamine">@methylphetamine</a>
+</p>
+
+---
+
 # OrangeFox build for begonia
 
 GitHub Actions builder for OrangeFox Recovery on the Xiaomi Redmi Note 8 Pro
