@@ -188,45 +188,45 @@ jobs:
           FOX_SETTINGS="/content/foxrecovery/gui/theme/portrait_hdpi/pages/settings.xml"
           export SETTINGS FOX_SETTINGS
           python3 -c "
-import os, re
-import xml.etree.ElementTree as ET
-
-settings = os.environ['SETTINGS']
-fox_settings = os.environ['FOX_SETTINGS']
-try:
-    tree = ET.parse(settings)
-    root = tree.getroot()
-    # Check if wifi_connect page already exists
-    if root.find('.//page[@name=\"wifi_connect\"]') is not None:
-        print('wifi_connect page already present in settings.xml')
-    else:
-        # Read the page XML from local foxrecovery source
-        if os.path.exists(fox_settings):
-            with open(fox_settings, 'r') as f:
-                content = f.read()
-            # Extract the wifi_connect page block
-            match = re.search(r'<page name=\"wifi_connect\".*?</page>', content, re.DOTALL)
-            if match:
-                page_block = match.group(0)
-                # Insert before the last </page> tag
-                last_close = content.rfind('</page>')
-                if last_close > 0:
-                    new_content = content[:last_close] + page_block + content[last_close:]
-                    with open(settings, 'w') as f:
-                        f.write(new_content)
-                    print('Added wifi_connect page to settings.xml')
-                else:
-                    print('Could not find closing </page> tag, skipping')
-            else:
-                print('wifi_connect page not found in foxrecovery source either')
-        else:
-            print('foxrecovery source not found at', fox_settings)
-        print('wifi_connect page restoration complete')
-except Exception as e:
-    print(f'Error restoring wifi_connect page: {e}')
-    import sys
-    sys.exit(1)
-"
+          import os, re
+          import xml.etree.ElementTree as ET
+          
+          settings = os.environ['SETTINGS']
+          fox_settings = os.environ['FOX_SETTINGS']
+          try:
+              tree = ET.parse(settings)
+              root = tree.getroot()
+              # Check if wifi_connect page already exists
+              if root.find('.//page[@name=\"wifi_connect\"]') is not None:
+                  print('wifi_connect page already present in settings.xml')
+              else:
+                  # Read the page XML from local foxrecovery source
+                  if os.path.exists(fox_settings):
+                      with open(fox_settings, 'r') as f:
+                          content = f.read()
+                      # Extract the wifi_connect page block
+                      match = re.search(r'<page name=\"wifi_connect\".*?</page>', content, re.DOTALL)
+                      if match:
+                          page_block = match.group(0)
+                          # Insert before the last </page> tag
+                          last_close = content.rfind('</page>')
+                          if last_close > 0:
+                              new_content = content[:last_close] + page_block + content[last_close:]
+                              with open(settings, 'w') as f:
+                                  f.write(new_content)
+                              print('Added wifi_connect page to settings.xml')
+                          else:
+                              print('Could not find closing </page> tag, skipping')
+                      else:
+                          print('wifi_connect page not found in foxrecovery source either')
+                  else:
+                      print('foxrecovery source not found at', fox_settings)
+                  print('wifi_connect page restoration complete')
+          except Exception as e:
+              print(f'Error restoring wifi_connect page: {e}')
+              import sys
+              sys.exit(1)
+          "
 
       - name: Ensure WiFi userspace sources
         run: |
