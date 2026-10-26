@@ -237,6 +237,13 @@ jobs:
           echo "--- device tree ---"
           ls -la "$SRC_DIR/device/xiaomi/begonia"
 
+      - name: Add maintainer credit to recovery
+        run: |
+          python3 "$GITHUB_WORKSPACE/scripts/patch_maintainer.py" "$GITHUB_WORKSPACE/$SRC_DIR"
+          grep -n '^OF_MAINTAINER' "$SRC_DIR/device/xiaomi/begonia/fox_begonia.mk"
+          grep -n '@methylphetamine' "$SRC_DIR/bootable/recovery/gui/theme/portrait_hdpi/pages/settings.xml"
+          file "$SRC_DIR/bootable/recovery/gui/theme/portrait_hdpi/images/Default/About/maintainer.png"
+
       - name: Verify on-screen keyboard helper
         run: |
           # foxkbd is committed as a prebuilt (tools/FOXKBD.md).  Building it
