@@ -1,0 +1,39 @@
+#!/bin/bash
+# gofile-downloader - Download files from gofile.io
+#
+# Usage: gofile-downloader <download_page_url> [destination]
+#
+#   download_page_url: The URL of the gofile download page (from gofile output)
+#   destination:      Optional output path (defaults to current directory filename)
+
+set -uo pipefail
+
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <gofile_download_page_url> [destination]"
+    exit 1
+fi
+
+DOWNLOAD_URL="$1"
+DEST="${2:-}"
+
+# Extract filename from URL if destination not provided
+if [ -z "$DEST" ]; then
+    DEST=$(basename "$DOWNLOAD_URL" .html 2>/dev/null)
+    if [ -z "$DEST" ]; then
+        DEST="gofile_download"
+    fi
+fi
+
+# Use curl to download with proper headers
+curl -L --progress-bar -o "$DEST" "$DOWNLOAD_URL" 2>/dev/null || {
+    # Fallback: try with referer
+    curl -L --progress-bar -o "$DEST" \
+        -H "Referer: https://gofile.io" \
+        "$DOWNLOAD_URL" 2>/dev/null || {
+        echo "::error::Failed to download from gofile: $DOWNLOAD_URL" >&2
+        exit 1
+    }
+}
+
+echo "Downloaded: $DEST"
+exit 0
