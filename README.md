@@ -57,10 +57,12 @@ and a browser dashboard to recovery:
 - The build's official OrangeFox installer ZIP is published unchanged. It
   contains the installer `META-INF`, `recovery.img`, and the default
   `sdcard/Fox` tools/extras (`FoxFiles`, Magisk/uninstall zips, and AromaFM).
+  An enhanced `NetsurfFM.zip` is also available as an artifact containing
+  Netsurf browser build with AromaFM-style touch interface.
   The workflow checks the ZIP integrity and required entries, confirms the
   tools are present, and verifies that the embedded `recovery.img` is
   byte-identical to the image checked above. The ZIP is uploaded as the
-  `orangefox-begonia-flashable` artifact alongside the
+  `orangefox-begonia-enhanced-arorafm` artifact alongside the
   `orangefox-begonia-recovery` image artifact. Only the embedded image needs to
   fit the 64 MiB partition; the installer ZIP is about 74 MB, so Telegram falls
   back to a download link.
