@@ -158,20 +158,35 @@ jobs:
       - name: Sync OrangeFox sources
         run: |
           mkdir -p "$GITHUB_WORKSPACE/fox-sync"
-          git clone --depth=1 "$FOX_SYNC_URL" "$GITHUB_WORKSPACE/fox-sync"
+          # The fox-sync bootstrap clone itself can hit a transient 503.
+          okc=0
+          for attempt in 1 2 3 4 5; do
+            echo "=== fox-sync bootstrap attempt $attempt ==="
+            rm -rf "$GITHUB_WORKSPACE/fox-sync"
+            if git clone --depth=1 "$FOX_SYNC_URL" "$GITHUB_WORKSPACE/fox-sync"; then
+              okc=1
+              break
+            fi
+            echo "bootstrap attempt $attempt failed"
+            sleep 60
+          done
+          if [ "$okc" != 1 ]; then
+            echo "::error::fox-sync bootstrap failed after 5 attempts"
+            exit 1
+          fi
           cd "$GITHUB_WORKSPACE/fox-sync"
           chmod +x ./orangefox_sync.sh
           # googlesource occasionally returns 503 for a single project; the
           # script is resumable, so retry the whole init/sync a few times.
           ok=0
-          for attempt in 1 2 3; do
+          for attempt in 1 2 3 4 5 6; do
             echo "=== OrangeFox sync attempt $attempt ==="
             if ./orangefox_sync.sh --branch "$FOX_SYNC_BRANCH" --path "$GITHUB_WORKSPACE/$SRC_DIR"; then
               ok=1
               break
             fi
             echo "sync attempt $attempt failed"
-            sleep 30
+            sleep 60
           done
           if [ "$ok" != 1 ]; then
             echo "::error::OrangeFox source sync failed after 3 attempts"
