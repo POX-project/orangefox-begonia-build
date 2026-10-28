@@ -773,8 +773,8 @@ jobs:
           fi
           test -f "$ZIP_NAME"
           RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          CAPTION=$(printf 'OrangeFox official installer ZIP - begonia (recovery.img + sdcard/Fox tools)\nZIP SHA256: %s\nGofile: %s\nRun: %s' \
-            "$ZIP_SHA" "${GOFILE_URL:-n/a}" "$RUN_URL")
+          CAPTION=$(printf 'OrangeFox official installer ZIP - begonia (recovery.img + sdcard/Fox tools)\nBranch: %s\nZIP SHA256: %s\nGofile: %s\nRun: %s' \
+            "${DEVICE_TREE_BRANCH}" "$ZIP_SHA" "${GOFILE_URL:-n/a}" "$RUN_URL")
           API="https://api.telegram.org/bot${TG_TOKEN}"
 
           if [ "$ZIP_SIZE" -le 49000000 ]; then
@@ -790,8 +790,8 @@ jobs:
             echo "::warning::Telegram sendDocument failed; sending a link instead"
           fi
 
-          TEXT=$(printf 'OrangeFox official installer ZIP - begonia (recovery.img + sdcard/Fox tools)\nZIP SHA256: %s\nGofile: %s\nRun: %s\nZIP size: %s bytes' \
-            "$ZIP_SHA" "${GOFILE_URL:-n/a}" "$RUN_URL" "$ZIP_SIZE")
+          TEXT=$(printf 'OrangeFox official installer ZIP - begonia (recovery.img + sdcard/Fox tools)\nBranch: %s\nZIP SHA256: %s\nGofile: %s\nRun: %s\nZIP size: %s bytes' \
+            "${DEVICE_TREE_BRANCH}" "$ZIP_SHA" "${GOFILE_URL:-n/a}" "$RUN_URL" "$ZIP_SIZE")
           curl -sS -o /tmp/tg.json \
             --data-urlencode "chat_id=${TG_CHAT}" \
             --data-urlencode "text=${TEXT}" \
