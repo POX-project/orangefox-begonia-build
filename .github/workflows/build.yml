@@ -334,12 +334,17 @@ jobs:
           grep -n 'status_info_y%+8' "$STATUS" | head
 
           # The net-fix device tree keeps the status bar at the top of the
-          # panel (inside the notch area) and carries the MT6360 torch paths.
+          # panel (inside the notch area) and carries the MT6360 torch path.
           # Fail early if a stale branch is selected.
           DEV_MK="$SRC_DIR/device/xiaomi/begonia/fox_begonia.mk"
           BOARD_MK="$SRC_DIR/device/xiaomi/begonia/BoardConfig.mk"
           grep -q '^OF_FL_PATH1 := /sys/class/leds/torch-light0$' "$DEV_MK"
-          grep -q '^OF_FL_PATH2 := /sys/class/leds/torch-light1$' "$DEV_MK"
+          # OF_FL_PATH2 must stay unset: writing the CH2 classdev disables CH1,
+          # which is the only wired flash LED on begonia, so the tile goes dark.
+          if grep -q '^OF_FL_PATH2[[:space:]]*:=' "$DEV_MK"; then
+            echo "::error::OF_FL_PATH2 is set; the second torch channel turns CH1 off on begonia"
+            exit 1
+          fi
           grep -q '^TW_Y_OFFSET := 0$' "$BOARD_MK"
           grep -q '^TW_H_OFFSET := 0$' "$BOARD_MK"
 
