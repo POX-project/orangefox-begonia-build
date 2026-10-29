@@ -222,7 +222,7 @@ jobs:
           ok=0
           for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
             echo "=== OrangeFox sync attempt $attempt ==="
-            if ./orangefox_sync.sh --branch "$FOX_SYNC_BRANCH" --path "$SRC_DIR"; then
+            if ./orangefox_sync.sh --branch "$FOX_SYNC_BRANCH" --path "$GITHUB_WORKSPACE/$SRC_DIR"; then
               ok=1
               break
             fi
@@ -233,6 +233,9 @@ jobs:
             echo "::error::OrangeFox source sync failed after 12 attempts"
             exit 1
           fi
+          # orangefox_sync.sh requires an absolute --path; return to the
+          # workspace so the relative $SRC_DIR used by later steps resolves.
+          cd "$GITHUB_WORKSPACE"
           echo "--- OrangeFox sources ---"
           ls -la "$SRC_DIR/bootable/recovery" | head
           ls -la "$SRC_DIR/vendor/recovery" | head
