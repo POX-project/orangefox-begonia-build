@@ -694,8 +694,13 @@ jobs:
           # mka is resumable, so a killed attempt is simply retried, and each
           # retry gets a slightly higher ceiling (the previous attempt proved
           # the earlier part of the build fits).
+          # systemd 249 cannot set OOMScoreAdjust on a *scope* (it is an
+          # ExecStart property), so the build's score is inherited from this
+          # shell instead: writing it to /proc/self/oom_score_adj below gives
+          # every descendant 500, and systemd-run's child inherits it too.
           SCOPE_OK=1
-          if ! systemd-run --user --scope --collect --quiet -p MemoryMax=3072M true >/dev/null 2>&1; then
+          if ! systemd-run --user --scope --collect --quiet \
+                 -p MemoryMax=3072M -p MemorySwapMax=1024M true >/dev/null 2>&1; then
             echo "::warning::systemd user scopes unavailable; running mka uncontained"
             SCOPE_OK=0
           fi
@@ -706,7 +711,7 @@ jobs:
             echo -1000 | sudo tee "/proc/$p/oom_score_adj" >/dev/null 2>&1 || true
           done
           # Everything this step spawns is a far better OOM candidate than the
-          # agent (children inherit this value; the scope overrides it).
+          # agent.  Children inherit this value.
           echo 500 > /proc/self/oom_score_adj 2>/dev/null || true
 
           RC=1
@@ -722,8 +727,7 @@ jobs:
             if [ "$SCOPE_OK" -eq 1 ]; then
               SCOPE=(systemd-run --user --scope --collect --quiet
                      -p "MemoryMax=${MEM_MAX_MB}M"
-                     -p "MemorySwapMax=${SWAP_MAX_MB}M"
-                     -p "OOMScoreAdjust=500")
+                     -p "MemorySwapMax=${SWAP_MAX_MB}M")
             fi
 
             echo "=== mka attempt $attempt: -j$BUILD_JOBS, memory ceiling ${MEM_MAX_MB}M (${pct}% of RAM), swap ${SWAP_MAX_MB}M ==="
