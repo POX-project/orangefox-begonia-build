@@ -723,12 +723,12 @@ jobs:
               mem_max=$(( MEM_MB * pct / 100 ))
               if [ "$mem_max" -lt 3072 ]; then mem_max=3072; fi
               swap_max=$(( MEM_MB / 4 ))
-              if [ "$swap_max" -gt 2048 ]; then swap_max=2048; fi
+              if [ "$swap_max" -gt 4096 ]; then swap_max=4096; fi
 
               scope=()
               if [ "$SCOPE_OK" -eq 1 ]; then
                 scope=(systemd-run --user --scope --collect --quiet
-                       -p "MemoryMax=${mem_max}M" -p "MemorySwapMax=${swap_max}M")
+                       -p "MemoryHigh=$((mem_max * 9 / 10))M" -p "MemoryMax=${mem_max}M" -p "MemorySwapMax=${swap_max}M")
               fi
 
               echo "=== ${label}: -j${jobs}, memory ceiling ${mem_max}M (${pct}% of RAM), swap ${swap_max}M ==="
@@ -766,7 +766,10 @@ jobs:
                 echo "only ${avail:-?}MB free: dropping the ccache before the retry"
                 ccache -C >/dev/null 2>&1 || true
               fi
-              echo "waiting for memory to settle before the next attempt"
+              # Reclaim page cache left behind by the killed attempt before retrying
+               sync
+               echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
+               echo "waiting for memory to settle before the next attempt"
               sleep 30
               free -h || true
             done
@@ -781,7 +784,9 @@ jobs:
           BOOT_JOBS=2
           if [ "$(nproc)" -lt 2 ]; then BOOT_JOBS=1; fi
           GRAPH_RC=0
-          run_capped "bootstrap (build graph)" nothing "88 92" "$BOOT_JOBS" || GRAPH_RC=$?
+           sync
+           echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
+           run_capped "bootstrap (build graph)" nothing "96 98" "$BOOT_JOBS" || GRAPH_RC=$?
           if [ "$GRAPH_RC" -ne 0 ]; then
             kill "$MON_PID" "$TAIL_PID" 2>/dev/null || true
             echo "::error::could not generate the build graph (exit $GRAPH_RC); see build.log"
@@ -791,7 +796,7 @@ jobs:
           # Phase 2 is the actual compile, which peaks far lower at -j1; keep
           # it on a tighter budget and resume it if it gets killed.
           COMPILE_RC=0
-          run_capped "compile" "$BUILD_TARGET" "70 78 85" "$BUILD_JOBS" || COMPILE_RC=$?
+          run_capped "compile" "$BUILD_TARGET" "80 88 94" "$BUILD_JOBS" || COMPILE_RC=$?
           kill "$MON_PID" "$TAIL_PID" 2>/dev/null || true
           if [ "$COMPILE_RC" -ne 0 ]; then
             echo "::error::mka $BUILD_TARGET failed with exit code $COMPILE_RC"
