@@ -15,6 +15,10 @@ on:
         description: 'OrangeFox sync branch (12.1 is the supported branch for this tree)'
         required: false
         default: '12.1'
+      device_tree_url:
+        description: 'Device tree repository URL'
+        required: false
+        default: 'https://github.com/POX-project/device_xiaomi_begonia-orangefox.git'
       device_branch:
         description: 'Device tree branch (unified = dynamic+erofs + FBEv2 decryption / non-dynamic+ext4-f2fs)'
         required: false
@@ -42,7 +46,8 @@ permissions:
 env:
   FOX_SYNC_URL: 'https://gitlab.com/OrangeFox/sync.git'
   FOX_SYNC_BRANCH: ${{ github.event.inputs.fox_branch || '12.1' }}
-  DEVICE_TREE_URL: 'https://github.com/methylphetamine/device_xiaomi_begonia-orangefox.git'
+  DEVICE_TREE_URL: ${{ github.event.inputs.device_tree_url || 'https://github.com/POX-project/device_xiaomi_begonia-orangefox.git' }}
+
   DEVICE_TREE_BRANCH: ${{ github.event.inputs.device_branch || 'unified' }}
   SRC_DIR: 'aosp'
   FOX_BUILD_TYPE: 'Unofficial'

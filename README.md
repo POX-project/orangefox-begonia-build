@@ -19,7 +19,7 @@ GitHub Actions builder for OrangeFox Recovery on the Xiaomi Redmi Note 8 Pro
 (`begonia`).
 
 - OrangeFox sync branch: `12.1`
-- Device tree: `methylphetamine/device_xiaomi_begonia-orangefox` (`unified`)
+- Device tree: `POX-project/device_xiaomi_begonia-orangefox` (`unified`)
 - Lunch target: `twrp_begonia-eng`
 - Output: `recovery.img` (published as an OrangeFox image)
 - Brand/model: `Randi` / `Nut 8 Pro`
