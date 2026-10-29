@@ -159,18 +159,15 @@ jobs:
 
           # Hosted runners vary a lot: some are 4 vCPU / 16 GB with a 146 GB
           # disk, others are 2 vCPU / 8 GB with a 73 GB disk.  On the small
-          # ones a big *disk* swapfile is counter-productive: it eats the
-          # space out/ needs and, when the build starts paging, the runner VM
-          # goes unresponsive and GitHub drops it with "lost communication"
-          # (exit 143).  Keep only a small disk overflow and use zram (below)
-          # as the real safety net.
+          # ones the graph build cannot fit in RAM, so a disk swapfile is
+          # required; keep it just large enough for the overflow and leave the
+          # rest of the disk to out/.  zram (below) is preferred when present.
           MEM_GB=$(awk '/MemTotal/{printf "%d", $2/1048576}' /proc/meminfo)
           AVAIL_GB=$(df -BG / | awk 'NR==2{gsub("G","",$4); print $4}')
-          if [ "$MEM_GB" -lt 12 ]; then
-            SWAP_GB=2
-          else
-            SWAP_GB=4
-          fi
+          # soong_build needs ~6-7 GB on this tree.  On the 8 GB runners it
+          # cannot fit entirely in RAM, so give the cgroup enough disk swap to
+          # spill the cold part instead of getting OOM-killed at the hard cap.
+          SWAP_GB=4
           if [ "$AVAIL_GB" -lt 40 ]; then SWAP_GB=1; fi
           echo "ram=${MEM_GB}G disk_free=${AVAIL_GB}G -> disk swap=${SWAP_GB}G"
 
@@ -673,10 +670,9 @@ jobs:
           # soong_build is Go and happily grows to several GB.  On the small
           # hosted runners that starves the runner agent and GitHub drops the
           # job with "lost communication with the server" (exit 143).  Keep the
-          # measured-safe 40% soft ceiling: 5 GiB / GOGC=100 let soong_build
-          # grow to 7.2 GiB RSS and the 96% cgroup OOM-killed it in minutes.
-          # The slow graph build was caused by the old 80% compile ceiling and
-          # MemoryHigh, not by this limit.
+          # measured-safe 40% soft ceiling.  It is not enough on its own:
+          # soong_build's RSS still reaches ~7.5 GB, which is why the cgroup
+          # below also needs a MemoryHigh throttle.
           MEM_MB=$(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo)
           GOMEMLIMIT=$(( MEM_MB * 2 / 5 / 1024 ))GiB
           export GOMEMLIMIT
@@ -734,13 +730,17 @@ jobs:
             for pct in $pct_list; do
               mem_max=$(( MEM_MB * pct / 100 ))
               if [ "$mem_max" -lt 3072 ]; then mem_max=3072; fi
-              swap_max=$(( MEM_MB / 4 ))
+              swap_max=$(( MEM_MB / 2 ))
               if [ "$swap_max" -gt 4096 ]; then swap_max=4096; fi
 
               scope=()
               if [ "$SCOPE_OK" -eq 1 ]; then
+                # A hard MemoryMax alone lets soong_build grow until the
+                # kernel kills it (7.5 GB RSS on the 8 GB runner).  Keep a
+                # soft MemoryHigh below it so reclaim/swap happens first and
+                # the graph build can finish.
                 scope=(systemd-run --user --scope --collect --quiet
-                       -p "MemoryMax=${mem_max}M" -p "MemorySwapMax=${swap_max}M")
+                       -p "MemoryHigh=$((mem_max * 9 / 10))M" -p "MemoryMax=${mem_max}M" -p "MemorySwapMax=${swap_max}M")
               fi
 
               echo "=== ${label}: -j${jobs}, memory ceiling ${mem_max}M (${pct}% of RAM), swap ${swap_max}M ==="
