@@ -605,7 +605,7 @@ jobs:
           USE_CCACHE: ${{ inputs.ccache || 'true' }}
           ALLOW_MISSING_DEPENDENCIES: 'true'
           MALLOC_ARENA_MAX: '2'
-          GOGC: '100'
+          GOGC: '50'
           GOMAXPROCS: '2'
           BUILD_JOBS: ${{ inputs.jobs || '2' }}
           MAKEFILE_NAME: ${{ inputs.makefile || 'twrp_begonia-eng' }}
@@ -672,12 +672,13 @@ jobs:
 
           # soong_build is Go and happily grows to several GB.  On the small
           # hosted runners that starves the runner agent and GitHub drops the
-          # job with "lost communication with the server" (exit 143).  Give the
-          # Go heap a soft ceiling tied to the real RAM: 3 GiB (40%) made
-          # soong_build GC continuously and spend hours in swap, so leave it
-          # room to work and let the cgroup below be the hard guard.
+          # job with "lost communication with the server" (exit 143).  Keep the
+          # measured-safe 40% soft ceiling: 5 GiB / GOGC=100 let soong_build
+          # grow to 7.2 GiB RSS and the 96% cgroup OOM-killed it in minutes.
+          # The slow graph build was caused by the old 80% compile ceiling and
+          # MemoryHigh, not by this limit.
           MEM_MB=$(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo)
-          GOMEMLIMIT=$(( MEM_MB * 2 / 3 / 1024 ))GiB
+          GOMEMLIMIT=$(( MEM_MB * 2 / 5 / 1024 ))GiB
           export GOMEMLIMIT
           echo "GOMEMLIMIT=$GOMEMLIMIT (MemTotal=${MEM_MB}MB)"
 
