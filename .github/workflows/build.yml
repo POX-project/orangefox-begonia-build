@@ -74,6 +74,10 @@ jobs:
           echo "target     : ${{ inputs.build_target || 'recoveryimage' }}"
           echo "jobs       : ${{ inputs.jobs || '4' }}"
           echo "ccache     : ${{ inputs.ccache || 'true' }}"
+          # The hosted pool is not homogeneous: the same label yields both
+          # 2 vCPU/8 GB/73 GB and 4 vCPU/16 GB/146 GB machines, and the build
+          # behaves very differently on each.  Record which one this is.
+          echo "runner     : $(nproc) vCPU, $(awk '/MemTotal/{printf "%.1f GiB RAM", $2/1048576}' /proc/meminfo), $(df -BG / | awk 'NR==2 {print $2}') disk"
           echo "free space before:"
           df -h /
 
@@ -675,10 +679,100 @@ jobs:
           fi
           echo "mka -j$BUILD_JOBS, $(nproc) vCPU"
 
-          mka "$BUILD_TARGET" -j"$BUILD_JOBS" \
-            BUILD_USERNAME="$BUILD_USERNAME" \
-            BUILD_HOSTNAME=poxproject 2>&1 | tee -a build.log
+          # The hosted pool mixes 2 vCPU/8 GB/73 GB and 4 vCPU/16 GB/146 GB
+          # machines, and every recent run on the small one died 20-30 minutes
+          # into the compile without uploading a single line of build.log: the
+          # VM went into reclaim, stopped heartbeating and was reclaimed by
+          # GitHub ("lost communication with the server", step cancelled or
+          # exit 143).  Swap tuning alone did not help, because the build can
+          # still pin nearly all of the RAM.
+          #
+          # So contain it instead: run mka inside a cgroup with a hard memory
+          # ceiling.  If the build overshoots, the kernel kills a compiler
+          # *inside that cgroup*, the step fails normally (137) and the log is
+          # uploaded; the runner agent and the rest of the VM stay alive.
+          # mka is resumable, so a killed attempt is simply retried, and each
+          # retry gets a slightly higher ceiling (the previous attempt proved
+          # the earlier part of the build fits).
+          SCOPE_OK=1
+          if ! systemd-run --user --scope --collect --quiet -p MemoryMax=3072M true >/dev/null 2>&1; then
+            echo "::warning::systemd user scopes unavailable; running mka uncontained"
+            SCOPE_OK=0
+          fi
+
+          # Never let the kernel pick the runner agent as the OOM victim: if
+          # it dies the job is lost, while a killed compiler is recoverable.
+          for p in $(pgrep -f 'Runner.Listener|Runner.Worker' || true); do
+            echo -1000 | sudo tee "/proc/$p/oom_score_adj" >/dev/null 2>&1 || true
+          done
+          # Everything this step spawns is a far better OOM candidate than the
+          # agent (children inherit this value; the scope overrides it).
+          echo 500 > /proc/self/oom_score_adj 2>/dev/null || true
+
+          RC=1
+          attempt=0
+          for pct in 66 75 83; do
+            attempt=$(( attempt + 1 ))
+            MEM_MAX_MB=$(( MEM_MB * pct / 100 ))
+            if [ "$MEM_MAX_MB" -lt 3072 ]; then MEM_MAX_MB=3072; fi
+            SWAP_MAX_MB=$(( MEM_MB / 4 ))
+            if [ "$SWAP_MAX_MB" -gt 2048 ]; then SWAP_MAX_MB=2048; fi
+
+            SCOPE=()
+            if [ "$SCOPE_OK" -eq 1 ]; then
+              SCOPE=(systemd-run --user --scope --collect --quiet
+                     -p "MemoryMax=${MEM_MAX_MB}M"
+                     -p "MemorySwapMax=${SWAP_MAX_MB}M"
+                     -p "OOMScoreAdjust=500")
+            fi
+
+            echo "=== mka attempt $attempt: -j$BUILD_JOBS, memory ceiling ${MEM_MAX_MB}M (${pct}% of RAM), swap ${SWAP_MAX_MB}M ==="
+            : > attempt.log
+            set +e
+            "${SCOPE[@]}" \
+              build/soong/soong_ui.bash --make-mode \
+              "$BUILD_TARGET" -j"$BUILD_JOBS" \
+              BUILD_USERNAME="$BUILD_USERNAME" \
+              BUILD_HOSTNAME=poxproject 2>&1 | tee -a build.log attempt.log
+            RC=${PIPESTATUS[0]}
+            set -e
+            echo "mka attempt $attempt exited $RC"
+            if [ "$RC" -eq 0 ]; then
+              break
+            fi
+            # A cgroup OOM kill only takes out one process, so the build can
+            # also come back as a normal ninja failure with "Killed" in the
+            # output.  Both forms are worth resuming from; a genuine compiler
+            # error (2, with diagnostics and no kill) is not.
+            OOM_KILL=0
+            if grep -q -E 'Killed|out of memory|signal 9' attempt.log 2>/dev/null; then
+              OOM_KILL=1
+            fi
+            case "$RC" in
+              137|139|143|135) OOM_KILL=1 ;;
+            esac
+            if [ "$OOM_KILL" -ne 1 ]; then
+              echo "mka failed with a compiler error; not retrying"
+              break
+            fi
+            echo "attempt $attempt was killed (exit $RC); last lines:"
+            tail -n 5 attempt.log || true
+            if [ "$attempt" -lt 3 ]; then
+              AVAIL_MB=$(df -BM "$SRC_DIR" | awk 'NR==2 {gsub("M", "", $4); print $4}')
+              if [ "${AVAIL_MB:-0}" -lt 4096 ]; then
+                echo "only ${AVAIL_MB}MB free: dropping the ccache before the retry"
+                ccache -C >/dev/null 2>&1 || true
+              fi
+              echo "waiting for memory to settle before resuming"
+              sleep 30
+              free -h || true
+            fi
+          done
           kill "$MON_PID" "$TAIL_PID" 2>/dev/null || true
+          if [ "$RC" -ne 0 ]; then
+            echo "::error::mka failed after ${attempt} attempt(s) with exit code $RC"
+            exit "$RC"
+          fi
 
       - name: Locate and verify output image
         id: image
