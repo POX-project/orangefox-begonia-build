@@ -688,12 +688,11 @@ jobs:
           # still pin nearly all of the RAM.
           #
           # So contain it instead: run mka inside a cgroup with a hard memory
-          # ceiling.  If the build overshoots, the kernel kills a compiler
-          # *inside that cgroup*, the step fails normally (137) and the log is
+          # ceiling.  If the build overshoots, the kernel kills a process
+          # *inside that cgroup*, the step fails normally and the log is
           # uploaded; the runner agent and the rest of the VM stay alive.
-          # mka is resumable, so a killed attempt is simply retried, and each
-          # retry gets a slightly higher ceiling (the previous attempt proved
-          # the earlier part of the build fits).
+          # mka is resumable, so a killed attempt is simply retried.
+          #
           # systemd 249 cannot set OOMScoreAdjust on a *scope* (it is an
           # ExecStart property), so the build's score is inherited from this
           # shell instead: writing it to /proc/self/oom_score_adj below gives
@@ -714,68 +713,89 @@ jobs:
           # agent.  Children inherit this value.
           echo 500 > /proc/self/oom_score_adj 2>/dev/null || true
 
-          RC=1
-          attempt=0
-          for pct in 66 75 83; do
-            attempt=$(( attempt + 1 ))
-            MEM_MAX_MB=$(( MEM_MB * pct / 100 ))
-            if [ "$MEM_MAX_MB" -lt 3072 ]; then MEM_MAX_MB=3072; fi
-            SWAP_MAX_MB=$(( MEM_MB / 4 ))
-            if [ "$SWAP_MAX_MB" -gt 2048 ]; then SWAP_MAX_MB=2048; fi
+          # One capped mka phase.  Killers get resumed with a higher ceiling
+          # (the previous attempt proved that everything before the kill fits);
+          # a real compiler error is reported immediately, not retried.
+          run_capped() {
+            label="$1"; target="$2"; pct_list="$3"; jobs="$4"
+            rc=1
+            for pct in $pct_list; do
+              mem_max=$(( MEM_MB * pct / 100 ))
+              if [ "$mem_max" -lt 3072 ]; then mem_max=3072; fi
+              swap_max=$(( MEM_MB / 4 ))
+              if [ "$swap_max" -gt 2048 ]; then swap_max=2048; fi
 
-            SCOPE=()
-            if [ "$SCOPE_OK" -eq 1 ]; then
-              SCOPE=(systemd-run --user --scope --collect --quiet
-                     -p "MemoryMax=${MEM_MAX_MB}M"
-                     -p "MemorySwapMax=${SWAP_MAX_MB}M")
-            fi
+              scope=()
+              if [ "$SCOPE_OK" -eq 1 ]; then
+                scope=(systemd-run --user --scope --collect --quiet
+                       -p "MemoryMax=${mem_max}M" -p "MemorySwapMax=${swap_max}M")
+              fi
 
-            echo "=== mka attempt $attempt: -j$BUILD_JOBS, memory ceiling ${MEM_MAX_MB}M (${pct}% of RAM), swap ${SWAP_MAX_MB}M ==="
-            : > attempt.log
-            set +e
-            "${SCOPE[@]}" \
-              build/soong/soong_ui.bash --make-mode \
-              "$BUILD_TARGET" -j"$BUILD_JOBS" \
-              BUILD_USERNAME="$BUILD_USERNAME" \
-              BUILD_HOSTNAME=poxproject 2>&1 | tee -a build.log attempt.log
-            RC=${PIPESTATUS[0]}
-            set -e
-            echo "mka attempt $attempt exited $RC"
-            if [ "$RC" -eq 0 ]; then
-              break
-            fi
-            # A cgroup OOM kill only takes out one process, so the build can
-            # also come back as a normal ninja failure with "Killed" in the
-            # output.  Both forms are worth resuming from; a genuine compiler
-            # error (2, with diagnostics and no kill) is not.
-            OOM_KILL=0
-            if grep -q -E 'Killed|out of memory|signal 9' attempt.log 2>/dev/null; then
-              OOM_KILL=1
-            fi
-            case "$RC" in
-              137|139|143|135) OOM_KILL=1 ;;
-            esac
-            if [ "$OOM_KILL" -ne 1 ]; then
-              echo "mka failed with a compiler error; not retrying"
-              break
-            fi
-            echo "attempt $attempt was killed (exit $RC); last lines:"
-            tail -n 5 attempt.log || true
-            if [ "$attempt" -lt 3 ]; then
-              AVAIL_MB=$(df -BM "$SRC_DIR" | awk 'NR==2 {gsub("M", "", $4); print $4}')
-              if [ "${AVAIL_MB:-0}" -lt 4096 ]; then
-                echo "only ${AVAIL_MB}MB free: dropping the ccache before the retry"
+              echo "=== ${label}: -j${jobs}, memory ceiling ${mem_max}M (${pct}% of RAM), swap ${swap_max}M ==="
+              : > attempt.log
+              set +e
+              "${scope[@]}" \
+                build/soong/soong_ui.bash --make-mode \
+                "$target" -j"$jobs" \
+                BUILD_USERNAME="$BUILD_USERNAME" \
+                BUILD_HOSTNAME=poxproject 2>&1 | tee -a build.log attempt.log
+              rc=${PIPESTATUS[0]}
+              set -e
+              echo "${label} exited ${rc}"
+              if [ "$rc" -eq 0 ]; then
+                return 0
+              fi
+              # A cgroup OOM kill only takes out one process, so the build can
+              # also come back as a normal ninja failure with "Killed" in the
+              # output.  Both forms are worth resuming from.
+              oom=0
+              if grep -q -E 'Killed|out of memory|signal 9' attempt.log 2>/dev/null; then
+                oom=1
+              fi
+              case "$rc" in
+                137|139|143|135) oom=1 ;;
+              esac
+              if [ "$oom" -ne 1 ]; then
+                echo "${label} failed with a compiler error; not retrying"
+                return "$rc"
+              fi
+              echo "${label} was killed (exit ${rc}); last lines:"
+              tail -n 5 attempt.log || true
+              avail=$(df -BM . 2>/dev/null | awk 'NR==2 {gsub("M", "", $4); print $4}')
+              if [ "${avail:-0}" -lt 4096 ]; then
+                echo "only ${avail:-?}MB free: dropping the ccache before the retry"
                 ccache -C >/dev/null 2>&1 || true
               fi
-              echo "waiting for memory to settle before resuming"
+              echo "waiting for memory to settle before the next attempt"
               sleep 30
               free -h || true
-            fi
-          done
+            done
+            return "$rc"
+          }
+
+          # Phase 1 generates the build graph.  This is the memory spike:
+          # soong_build reaches ~5 GB on this tree (measured), and it is one
+          # sequential process, so it gets most of the box - still capped, so
+          # it cannot drag the VM into reclaim.  The small bootstrap Go
+          # compiles are cheap, so they run two at a time.
+          BOOT_JOBS=2
+          if [ "$(nproc)" -lt 2 ]; then BOOT_JOBS=1; fi
+          GRAPH_RC=0
+          run_capped "bootstrap (build graph)" nothing "88 92" "$BOOT_JOBS" || GRAPH_RC=$?
+          if [ "$GRAPH_RC" -ne 0 ]; then
+            kill "$MON_PID" "$TAIL_PID" 2>/dev/null || true
+            echo "::error::could not generate the build graph (exit $GRAPH_RC); see build.log"
+            exit "$GRAPH_RC"
+          fi
+
+          # Phase 2 is the actual compile, which peaks far lower at -j1; keep
+          # it on a tighter budget and resume it if it gets killed.
+          COMPILE_RC=0
+          run_capped "compile" "$BUILD_TARGET" "70 78 85" "$BUILD_JOBS" || COMPILE_RC=$?
           kill "$MON_PID" "$TAIL_PID" 2>/dev/null || true
-          if [ "$RC" -ne 0 ]; then
-            echo "::error::mka failed after ${attempt} attempt(s) with exit code $RC"
-            exit "$RC"
+          if [ "$COMPILE_RC" -ne 0 ]; then
+            echo "::error::mka $BUILD_TARGET failed with exit code $COMPILE_RC"
+            exit "$COMPILE_RC"
           fi
 
       - name: Locate and verify output image
