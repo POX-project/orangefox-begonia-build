@@ -187,6 +187,7 @@ jobs:
           fi
           # Compressed swap in RAM: absorbs the compiler/linker spikes without
           # touching the runner disk, which is what keeps the agent responsive.
+          HAVE_ZRAM=0
           if sudo modprobe zram 2>/dev/null && [ -e /dev/zram0 ]; then
             ZRAM_GB=$(( MEM_GB * 3 / 4 ))
             if [ "$ZRAM_GB" -gt 8 ]; then ZRAM_GB=8; fi
@@ -195,9 +196,18 @@ jobs:
             if [ -n "$ZDEV" ] && sudo mkswap "$ZDEV" >/dev/null 2>&1 \
                 && sudo swapon --priority 100 "$ZDEV"; then
               echo "zram swap ${ZRAM_GB}G enabled at $ZDEV"
+              HAVE_ZRAM=1
             fi
           fi
-          sudo sysctl -w vm.swappiness=100 || true
+          # With disk-backed swap, 100 makes the kernel evict the hot pages of
+          # a long-lived process like soong_build.  That turns the graph build
+          # into a multi-hour page-fault storm; keep it low unless zram (cheap
+          # random access) is actually available.
+          if [ "$HAVE_ZRAM" -eq 1 ]; then
+            sudo sysctl -w vm.swappiness=100 || true
+          else
+            sudo sysctl -w vm.swappiness=10 || true
+          fi
           sudo sysctl -w vm.vfs_cache_pressure=50 || true
           sudo sysctl -w vm.min_free_kbytes=131072 || true
           # zram is random-access, so skip the readahead multiplier.
@@ -595,7 +605,7 @@ jobs:
           USE_CCACHE: ${{ inputs.ccache || 'true' }}
           ALLOW_MISSING_DEPENDENCIES: 'true'
           MALLOC_ARENA_MAX: '2'
-          GOGC: '50'
+          GOGC: '100'
           GOMAXPROCS: '2'
           BUILD_JOBS: ${{ inputs.jobs || '2' }}
           MAKEFILE_NAME: ${{ inputs.makefile || 'twrp_begonia-eng' }}
@@ -662,11 +672,12 @@ jobs:
 
           # soong_build is Go and happily grows to several GB.  On the small
           # hosted runners that starves the runner agent and GitHub drops the
-          # job with "lost communication with the server" (exit 143), so give
-          # the Go heap a soft ceiling tied to the real RAM instead of the
-          # fixed 12 GiB that only made sense on the 16 GB runners.
+          # job with "lost communication with the server" (exit 143).  Give the
+          # Go heap a soft ceiling tied to the real RAM: 3 GiB (40%) made
+          # soong_build GC continuously and spend hours in swap, so leave it
+          # room to work and let the cgroup below be the hard guard.
           MEM_MB=$(awk '/MemTotal/{printf "%d", $2/1024}' /proc/meminfo)
-          GOMEMLIMIT=$(( MEM_MB * 2 / 5 / 1024 ))GiB
+          GOMEMLIMIT=$(( MEM_MB * 2 / 3 / 1024 ))GiB
           export GOMEMLIMIT
           echo "GOMEMLIMIT=$GOMEMLIMIT (MemTotal=${MEM_MB}MB)"
 
@@ -728,13 +739,17 @@ jobs:
               scope=()
               if [ "$SCOPE_OK" -eq 1 ]; then
                 scope=(systemd-run --user --scope --collect --quiet
-                       -p "MemoryHigh=$((mem_max * 9 / 10))M" -p "MemoryMax=${mem_max}M" -p "MemorySwapMax=${swap_max}M")
+                       -p "MemoryMax=${mem_max}M" -p "MemorySwapMax=${swap_max}M")
               fi
 
               echo "=== ${label}: -j${jobs}, memory ceiling ${mem_max}M (${pct}% of RAM), swap ${swap_max}M ==="
               : > attempt.log
               set +e
+              # A build that only thrashes should not sit here for hours.  The
+              # timeout is per attempt; the next attempt resumes incrementally
+              # at the next ceiling.
               "${scope[@]}" \
+                timeout --signal=TERM --kill-after=60s 9000 \
                 build/soong/soong_ui.bash --make-mode \
                 "$target" -j"$jobs" \
                 BUILD_USERNAME="$BUILD_USERNAME" \
@@ -753,7 +768,7 @@ jobs:
                 oom=1
               fi
               case "$rc" in
-                137|139|143|135) oom=1 ;;
+                124|137|139|143|135) oom=1 ;;
               esac
               if [ "$oom" -ne 1 ]; then
                 echo "${label} failed with a compiler error; not retrying"
@@ -776,31 +791,20 @@ jobs:
             return "$rc"
           }
 
-          # Phase 1 generates the build graph.  This is the memory spike:
-          # soong_build reaches ~5 GB on this tree (measured), and it is one
-          # sequential process, so it gets most of the box - still capped, so
-          # it cannot drag the VM into reclaim.  The small bootstrap Go
-          # compiles are cheap, so they run two at a time.
-          BOOT_JOBS=2
-          if [ "$(nproc)" -lt 2 ]; then BOOT_JOBS=1; fi
-          GRAPH_RC=0
-           sync
-           echo 3 | sudo tee /proc/sys/vm/drop_caches >/dev/null 2>&1 || true
-           run_capped "bootstrap (build graph)" nothing "96 98" "$BOOT_JOBS" || GRAPH_RC=$?
-          if [ "$GRAPH_RC" -ne 0 ]; then
-            kill "$MON_PID" "$TAIL_PID" 2>/dev/null || true
-            echo "::error::could not generate the build graph (exit $GRAPH_RC); see build.log"
-            exit "$GRAPH_RC"
-          fi
-
-          # Phase 2 is the actual compile, which peaks far lower at -j1; keep
-          # it on a tighter budget and resume it if it gets killed.
-          COMPILE_RC=0
-          run_capped "compile" "$BUILD_TARGET" "80 88 94" "$BUILD_JOBS" || COMPILE_RC=$?
+          # A single `m` invocation, not a separate "generate the graph, then
+          # compile" pair.  soong_build (the ~5-6 GB graph step) is re-run at
+          # the start of the compile anyway because the glob shards are
+          # regenerated, so a bootstrap phase only doubled the slowest part of
+          # the build.  The graph needs almost the whole box, and at -j1 the
+          # compile itself peaks far lower, so one high ceiling covers both.
+          # If the first attempt is killed, the retry resumes incrementally at
+          # a slightly higher ceiling.
+          rid=0
+          run_capped "build (graph + compile)" "$BUILD_TARGET" "96 98" "$BUILD_JOBS" || rid=$?
           kill "$MON_PID" "$TAIL_PID" 2>/dev/null || true
-          if [ "$COMPILE_RC" -ne 0 ]; then
-            echo "::error::mka $BUILD_TARGET failed with exit code $COMPILE_RC"
-            exit "$COMPILE_RC"
+          if [ "$rid" -ne 0 ]; then
+            echo "::error::mka $BUILD_TARGET failed with exit code $rid"
+            exit "$rid"
           fi
 
       - name: Locate and verify output image
