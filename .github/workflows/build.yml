@@ -16,9 +16,9 @@ on:
         required: false
         default: '12.1'
       device_branch:
-        description: 'Device tree branch (net-fix has the recovery WiFi + curl/Links2/foxkbd payload)'
+        description: 'Device tree branch (scrcpy-support has WiFi, curl/Links2/foxkbd, gofile and the torch fix)'
         required: false
-        default: 'net-fix'
+        default: 'scrcpy-support'
       jobs:
         description: 'Parallel make jobs (2 is the safe maximum on a 16 GB hosted runner)'
         required: false
@@ -43,7 +43,7 @@ env:
   FOX_SYNC_URL: 'https://gitlab.com/OrangeFox/sync.git'
   FOX_SYNC_BRANCH: ${{ github.event.inputs.fox_branch || '12.1' }}
   DEVICE_TREE_URL: 'https://github.com/methylphetamine/device_xiaomi_begonia-orangefox.git'
-  DEVICE_TREE_BRANCH: ${{ github.event.inputs.device_branch || 'net-fix' }}
+  DEVICE_TREE_BRANCH: ${{ github.event.inputs.device_branch || 'scrcpy-support' }}
   # Hosted ubuntu-22.04 runners can have as little as ~14 GB free before
   # cleanup.  The OrangeFox 12.1 checkout is ~34 GB, so every GB counts:
   # the workflow removes unused runner toolchains before syncing and drops
