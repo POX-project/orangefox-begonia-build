@@ -1,0 +1,81 @@
+name: runner diag
+
+on:
+  push:
+    branches:
+      - fix/runner-limits
+    paths:
+      - '.github/workflows/runner-diag.yml'
+  workflow_dispatch:
+
+jobs:
+  diag:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: System
+        run: |
+          set +e
+          echo "=== virt/version ==="
+          systemd-detect-virt || true
+          uname -a
+          nproc
+          echo "=== memory ==="
+          free -h
+          cat /proc/meminfo | head -5
+          echo "=== block devices ==="
+          lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
+          echo "=== mounts (real fs only) ==="
+          df -hT | grep -v -E 'tmpfs|devtmpfs|squashfs'
+          echo "=== /mnt ==="
+          ls -la /mnt || true
+          echo "=== fstab ==="
+          cat /etc/fstab
+          echo "=== swap ==="
+          swapon --show || true
+          cat /proc/swaps
+          echo "=== cgroup ==="
+          stat -fc %T /sys/fs/cgroup
+          systemctl --version | head -1
+          echo "=== oom scores ==="
+          for p in $(pgrep -f 'Runner.Listener|Runner.Worker' || true); do
+            echo "$p $(tr '\0' ' ' < /proc/$p/cmdline | cut -c1-60) oom_score_adj=$(cat /proc/$p/oom_score_adj 2>/dev/null)"
+          done
+          echo "=== perms ==="
+          sudo -n true && echo "passwordless sudo: yes" || echo "passwordless sudo: no"
+          id
+      - name: systemd-run scope support
+        run: |
+          set +e
+          echo "--- user manager ---"
+          systemctl --user status >/dev/null 2>&1 && echo "user manager: up" || echo "user manager: down"
+          echo "--- system scope ---"
+          sudo systemd-run --scope --quiet -p MemoryMax=256M sh -c 'echo scope ok; cat /sys/fs/cgroup/$(cat /proc/self/cgroup | cut -d: -f3)/memory.max'
+          echo "rc=$?"
+          echo "--- user scope ---"
+          systemd-run --user --scope --quiet -p MemoryMax=256M sh -c 'echo user scope ok' 2>&1 | tail -3
+          echo "rc=$?"
+      - name: Storage cleanup math
+        run: |
+          set +e
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                    /opt/hostedtoolcache /opt/microsoft /opt/az /opt/google \
+                    /opt/containerd /opt/pipx \
+                    /usr/local/lib/node_modules /usr/local/share/powershell \
+                    /usr/local/swift /usr/local/.ghcup /usr/local/aws-cli /usr/local/aws \
+                    /usr/local/share/boost \
+                    /usr/share/swift /usr/share/miniconda /usr/share/az_* \
+                    /usr/share/grafana /usr/share/kibana /usr/share/doc /usr/share/man \
+                    /usr/share/locale /usr/lib/mono /usr/lib/R /usr/lib/postgresql \
+                    /usr/lib/mysql /usr/lib/firefox /usr/lib/chromium \
+                    /var/lib/docker /var/lib/containerd /var/lib/snapd /var/lib/apt/lists \
+                    /var/cache/apt/archives/* \
+                    /home/runner/.cache /home/runner/.npm /home/runner/.dotnet \
+                    /home/runner/.rustup /home/runner/.cargo /home/runner/.ghcup \
+                    /home/runner/.local/lib \
+                    /usr/local/lib/libclang* /usr/lib/llvm* /usr/local/lib/gcc* \
+                    /usr/lib/gcc* /usr/local/lib/go* /usr/lib/go* \
+                    /tmp/* 2>/dev/null
+          sudo apt-get clean
+          echo "=== after cleanup ==="
+          df -hT | grep -v -E 'tmpfs|devtmpfs|squashfs'
+          du -xsh /usr /opt /var /home 2>/dev/null
