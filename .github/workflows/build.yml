@@ -44,9 +44,15 @@ env:
   FOX_SYNC_BRANCH: ${{ github.event.inputs.fox_branch || '12.1' }}
   DEVICE_TREE_URL: 'https://github.com/methylphetamine/device_xiaomi_begonia-orangefox.git'
   DEVICE_TREE_BRANCH: ${{ github.event.inputs.device_branch || 'net-fix' }}
-  SRC_DIR: 'aosp'
+  # Keep the AOSP checkout, ccache and swap on the runner's large scratch
+  # disk (normally /mnt, ~70 GB).  The root filesystem is small and mostly
+  # consumed by the runner image; an OrangeFox sync plus ccache does not fit
+  # there, and the runner has died with "No space left on device" mid-sync.
+  SRC_DIR: '/mnt/ofox/aosp'
+  FOX_SYNC_DIR: '/mnt/ofox/fox-sync'
+  CCACHE_DIR: '/mnt/ofox/.ccache'
+  SWAPFILE: '/mnt/ofox/swapfile'
   FOX_BUILD_TYPE: 'Unofficial'
-  CCACHE_DIR: '${{ github.workspace }}/.ccache'
 
 jobs:
   build:
@@ -73,6 +79,22 @@ jobs:
 
       - name: Free disk space
         run: |
+          # The hosted runner's root filesystem is tiny compared with the
+          # ~70 GB scratch disk mounted at /mnt.  Build there, not in
+          # $GITHUB_WORKSPACE.
+          if [ ! -d /mnt ]; then
+            echo "::error::/mnt scratch disk is missing; cannot build OrangeFox"
+            exit 1
+          fi
+          sudo mkdir -p "$(dirname "$SRC_DIR")" "$FOX_SYNC_DIR" "$CCACHE_DIR"
+          sudo chown -R "$USER":"$USER" "$(dirname "$SRC_DIR")"
+          AVAIL=$(df -B1 /mnt | tail -1 | awk '{print $4}')
+          echo "scratch disk /mnt free: $AVAIL bytes"
+          if [ "${AVAIL:-0}" -lt 20000000000 ]; then
+            echo "::error::/mnt has less than 20 GB free; the AOSP sync will not fit"
+            exit 1
+          fi
+
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                     "$AGENT_TOOLSDIRECTORY/CodeQL" \
                     "$AGENT_TOOLSDIRECTORY/Python" \
@@ -87,8 +109,9 @@ jobs:
                     /var/cache/apt/archives/* /tmp/* 2>/dev/null || true
           sudo apt-get clean || true
           df -h /
-          df -h /tmp
+          df -h /mnt
           echo "FREE_SPACE_BYTES=$(df -B1 / | tail -1 | awk '{print $4}')" >> "$GITHUB_ENV"
+          echo "SCRATCH_FREE_BYTES=$(df -B1 /mnt | tail -1 | awk '{print $4}')" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
         run: |
@@ -130,16 +153,25 @@ jobs:
           sudo systemctl stop earlyoom 2>/dev/null || true
           echo "oomd: $(systemctl is-active systemd-oomd 2>/dev/null || echo absent)"
           sudo timeout 120 swapoff -a || true
-          sudo rm -f /swapfile
-          sudo fallocate -l 8G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          # Swap used to live on / (8 GB), competing with the source checkout
+          # for the tiny root filesystem.  Keep it on the scratch disk too.
+          sudo rm -f /swapfile "$SWAPFILE"
+          if sudo fallocate -l 8G "$SWAPFILE" \
+              && sudo chmod 600 "$SWAPFILE" \
+              && sudo mkswap "$SWAPFILE" \
+              && sudo swapon "$SWAPFILE"; then
+            echo "swap enabled at $SWAPFILE"
+          else
+            echo "::warning::could not enable swap at $SWAPFILE; continuing without swap"
+            sudo swapoff "$SWAPFILE" 2>/dev/null || true
+            sudo rm -f "$SWAPFILE"
+          fi
           sudo sysctl -w vm.swappiness=10 || true
           sudo sysctl -w vm.vfs_cache_pressure=50 || true
           echo "=== swap after ==="
           swapon --show
           free -h
+          df -h / /mnt
 
       - name: Install repo launcher
         run: |
@@ -167,13 +199,13 @@ jobs:
 
       - name: Sync OrangeFox sources
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/fox-sync"
+          mkdir -p "$FOX_SYNC_DIR"
           # The fox-sync bootstrap clone itself can hit a transient 503.
           okc=0
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
             echo "=== fox-sync bootstrap attempt $attempt ==="
-            rm -rf "$GITHUB_WORKSPACE/fox-sync"
-            if git clone --depth=1 "$FOX_SYNC_URL" "$GITHUB_WORKSPACE/fox-sync"; then
+            rm -rf "$FOX_SYNC_DIR"
+            if git clone --depth=1 "$FOX_SYNC_URL" "$FOX_SYNC_DIR"; then
               okc=1
               break
             fi
@@ -184,14 +216,14 @@ jobs:
             echo "::error::fox-sync bootstrap failed after 10 attempts"
             exit 1
           fi
-          cd "$GITHUB_WORKSPACE/fox-sync"
+          cd "$FOX_SYNC_DIR"
           chmod +x ./orangefox_sync.sh
           # googlesource occasionally returns 503 for a single project; the
           # script is resumable, so retry the whole init/sync a few times.
           ok=0
           for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
             echo "=== OrangeFox sync attempt $attempt ==="
-            if ./orangefox_sync.sh --branch "$FOX_SYNC_BRANCH" --path "$GITHUB_WORKSPACE/$SRC_DIR"; then
+            if ./orangefox_sync.sh --branch "$FOX_SYNC_BRANCH" --path "$SRC_DIR"; then
               ok=1
               break
             fi
@@ -203,13 +235,15 @@ jobs:
             exit 1
           fi
           echo "--- OrangeFox sources ---"
-          ls -la "$GITHUB_WORKSPACE/$SRC_DIR/bootable/recovery" | head
-          ls -la "$GITHUB_WORKSPACE/$SRC_DIR/vendor/recovery" | head
-          ls -la "$GITHUB_WORKSPACE/$SRC_DIR/vendor/twrp" | head
+          ls -la "$SRC_DIR/bootable/recovery" | head
+          ls -la "$SRC_DIR/vendor/recovery" | head
+          ls -la "$SRC_DIR/vendor/twrp" | head
+          du -sh "$SRC_DIR" || true
+          df -h /mnt
 
       - name: Restore wifi_connect page after sync
         run: |
-          SETTINGS="$GITHUB_WORKSPACE/$SRC_DIR/bootable/recovery/gui/theme/portrait_hdpi/pages/settings.xml"
+          SETTINGS="$SRC_DIR/bootable/recovery/gui/theme/portrait_hdpi/pages/settings.xml"
           FOX_SETTINGS="/content/foxrecovery/gui/theme/portrait_hdpi/pages/settings.xml"
           export SETTINGS FOX_SETTINGS
           python3 -c "
@@ -255,7 +289,7 @@ jobs:
 
       - name: Ensure WiFi userspace sources
         run: |
-          cd "$GITHUB_WORKSPACE/$SRC_DIR"
+          cd "$SRC_DIR"
           # default.xml lists external/wpa_supplicant_8, but the minimal
           # manifest includes remove-minimal.xml, which removes that project
           # ("remove-project name=platform/external/wpa_supplicant_8").  It is
@@ -310,7 +344,7 @@ jobs:
 
       - name: Add maintainer credit to recovery
         run: |
-          python3 "$GITHUB_WORKSPACE/scripts/patch_maintainer.py" "$GITHUB_WORKSPACE/$SRC_DIR"
+          python3 "$GITHUB_WORKSPACE/scripts/patch_maintainer.py" "$SRC_DIR"
           grep -n '^OF_MAINTAINER' "$SRC_DIR/device/xiaomi/begonia/fox_begonia.mk"
           grep -n '@methylphetamine' "$SRC_DIR/bootable/recovery/gui/theme/portrait_hdpi/pages/settings.xml"
           file "$SRC_DIR/bootable/recovery/gui/theme/portrait_hdpi/images/Default/About/maintainer.png"
@@ -444,7 +478,7 @@ jobs:
 
       - name: Patch vold FBE directories for recovery
         run: |
-          cd "$GITHUB_WORKSPACE/$SRC_DIR"
+          cd "$SRC_DIR"
           FSCRYPT="system/vold/FsCrypt.cpp"
           if [ ! -f "$FSCRYPT" ]; then
             echo "::error::$FSCRYPT is missing; cannot patch FBE key setup"
@@ -481,7 +515,7 @@ jobs:
 
       - name: Patch vold for dynamic FBE v1/v2 decryption
         run: |
-          cd "$GITHUB_WORKSPACE/$SRC_DIR"
+          cd "$SRC_DIR"
           FSCRYPT="system/vold/FsCrypt.cpp"
           test -f "$FSCRYPT"
           python3 "$GITHUB_WORKSPACE/scripts/patch_vold_dynamic_fbe.py" "$FSCRYPT"
