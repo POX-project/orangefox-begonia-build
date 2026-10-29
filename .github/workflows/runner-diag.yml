@@ -12,70 +12,30 @@ jobs:
   diag:
     runs-on: ubuntu-22.04
     steps:
-      - name: System
+      - name: cgroup enforcement
         run: |
           set +e
-          echo "=== virt/version ==="
-          systemd-detect-virt || true
-          uname -a
-          nproc
-          echo "=== memory ==="
+          echo "=== plain user scope MemoryMax=128M, alloc 512M ==="
+          systemd-run --user --scope --quiet --collect \
+            -p MemoryMax=128M -p MemorySwapMax=32M \
+            timeout 60 python3 -c 'b=bytearray(512*1024*1024); print("allocated", len(b))'
+          echo "rc=$?"
+          echo
+          echo "=== user scope with mka-like child (bash -> sleep) ==="
+          systemd-run --user --scope --quiet --collect -p MemoryMax=4G -p MemorySwapMax=1G \
+            bash -c 'echo "memory.max=$(cat /sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.max)"; echo "memory.swap.max=$(cat /sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.swap.max)"; echo "oom.group=$(cat /sys/fs/cgroup$(cut -d: -f3 /proc/self/cgroup)/memory.oom.group 2>/dev/null)"'
+          echo "rc=$?"
+          echo
+          echo "=== does a SIGKILL inside the scope report 137 through a pipe? ==="
+          set -o pipefail
+          systemd-run --user --scope --quiet --collect -p MemoryMax=64M -p MemorySwapMax=0 \
+            python3 -c 'b=bytearray(256*1024*1024)' 2>&1 | tail -3
+          echo "pipestatus=$?"
+      - name: free disk / inode math
+        run: |
+          set +e
+          df -h / ; df -i / | tail -1
+          echo "--- existing swap offline test ---"
+          sudo swapoff /swapfile && echo "swapoff ok" || echo "swapoff failed"
+          swapon --show
           free -h
-          cat /proc/meminfo | head -5
-          echo "=== block devices ==="
-          lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
-          echo "=== mounts (real fs only) ==="
-          df -hT | grep -v -E 'tmpfs|devtmpfs|squashfs'
-          echo "=== /mnt ==="
-          ls -la /mnt || true
-          echo "=== fstab ==="
-          cat /etc/fstab
-          echo "=== swap ==="
-          swapon --show || true
-          cat /proc/swaps
-          echo "=== cgroup ==="
-          stat -fc %T /sys/fs/cgroup
-          systemctl --version | head -1
-          echo "=== oom scores ==="
-          for p in $(pgrep -f 'Runner.Listener|Runner.Worker' || true); do
-            echo "$p $(tr '\0' ' ' < /proc/$p/cmdline | cut -c1-60) oom_score_adj=$(cat /proc/$p/oom_score_adj 2>/dev/null)"
-          done
-          echo "=== perms ==="
-          sudo -n true && echo "passwordless sudo: yes" || echo "passwordless sudo: no"
-          id
-      - name: systemd-run scope support
-        run: |
-          set +e
-          echo "--- user manager ---"
-          systemctl --user status >/dev/null 2>&1 && echo "user manager: up" || echo "user manager: down"
-          echo "--- system scope ---"
-          sudo systemd-run --scope --quiet -p MemoryMax=256M sh -c 'echo scope ok; cat /sys/fs/cgroup/$(cat /proc/self/cgroup | cut -d: -f3)/memory.max'
-          echo "rc=$?"
-          echo "--- user scope ---"
-          systemd-run --user --scope --quiet -p MemoryMax=256M sh -c 'echo user scope ok' 2>&1 | tail -3
-          echo "rc=$?"
-      - name: Storage cleanup math
-        run: |
-          set +e
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                    /opt/hostedtoolcache /opt/microsoft /opt/az /opt/google \
-                    /opt/containerd /opt/pipx \
-                    /usr/local/lib/node_modules /usr/local/share/powershell \
-                    /usr/local/swift /usr/local/.ghcup /usr/local/aws-cli /usr/local/aws \
-                    /usr/local/share/boost \
-                    /usr/share/swift /usr/share/miniconda /usr/share/az_* \
-                    /usr/share/grafana /usr/share/kibana /usr/share/doc /usr/share/man \
-                    /usr/share/locale /usr/lib/mono /usr/lib/R /usr/lib/postgresql \
-                    /usr/lib/mysql /usr/lib/firefox /usr/lib/chromium \
-                    /var/lib/docker /var/lib/containerd /var/lib/snapd /var/lib/apt/lists \
-                    /var/cache/apt/archives/* \
-                    /home/runner/.cache /home/runner/.npm /home/runner/.dotnet \
-                    /home/runner/.rustup /home/runner/.cargo /home/runner/.ghcup \
-                    /home/runner/.local/lib \
-                    /usr/local/lib/libclang* /usr/lib/llvm* /usr/local/lib/gcc* \
-                    /usr/lib/gcc* /usr/local/lib/go* /usr/lib/go* \
-                    /tmp/* 2>/dev/null
-          sudo apt-get clean
-          echo "=== after cleanup ==="
-          df -hT | grep -v -E 'tmpfs|devtmpfs|squashfs'
-          du -xsh /usr /opt /var /home 2>/dev/null
