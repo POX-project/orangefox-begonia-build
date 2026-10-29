@@ -169,7 +169,7 @@ jobs:
           echo "=== swap after ==="
           swapon --show
           free -h
-          df -h / /mnt
+          df -h /
 
       - name: Install repo launcher
         run: |
@@ -192,7 +192,8 @@ jobs:
         if: ${{ (inputs.ccache || 'true') == 'true' }}
         run: |
           mkdir -p "$CCACHE_DIR"
-          ccache -M 8G
+          ccache -M 2G
+          ccache -c || true
           ccache --zero-stats || true
 
       - name: Sync OrangeFox sources
